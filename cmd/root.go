@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/Panandika/notion-tui/internal/config"
+	"github.com/Panandika/notion-tui/internal/ui"
 )
 
 var rootCmd = &cobra.Command{
@@ -90,12 +94,16 @@ func initConfig() {
 }
 
 // runTUI is the main entry point for the TUI application.
-// Implemented in Phase 2.
 func runTUI(cmd *cobra.Command, args []string) error {
-	fmt.Println("notion-tui is ready for Phase 2 implementation!")
-	fmt.Printf("Config file: %s\n", viper.ConfigFileUsed())
-	fmt.Printf("Token set: %v\n", viper.GetString("notion_token") != "")
-	fmt.Printf("Database ID: %s\n", viper.GetString("database_id"))
-	fmt.Printf("Debug mode: %v\n", viper.GetBool("debug"))
-	return nil
+	// Load configuration (validation happens in config.Load)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Create and run the TUI
+	model := ui.NewModel(cfg)
+	p := tea.NewProgram(model)
+	_, err = p.Run()
+	return err
 }
