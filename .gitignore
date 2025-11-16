@@ -31,4 +31,5 @@ go.work.sum
 # .idea/
 # .vscode/
 .plan/
-.CLAUDE.md
+CLAUDE.md
+.claude

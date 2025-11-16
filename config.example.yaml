@@ -1,0 +1,29 @@
+# Notion TUI Configuration Example
+#
+# Copy this to ~/.config/notion-tui/config.yaml and update with your values.
+# Configuration can also be provided via:
+# - Command-line flags: notion-tui --token "secret_xxx" --database-id "db_id"
+# - Environment variables: NOTION_TUI_NOTION_TOKEN, NOTION_TUI_DATABASE_ID
+#
+# Priority (highest to lowest):
+# 1. Command-line flags
+# 2. Environment variables (NOTION_TUI_* prefix)
+# 3. Configuration file (~/.config/notion-tui/config.yaml or via --config flag)
+# 4. Default values
+
+# Your Notion API token
+# Generate at: https://www.notion.so/profile/integrations
+# DO NOT commit this to version control
+notion_token: "secret_xxx"
+
+# ID of the Notion database to open by default
+# Find in the URL: notion.so/...?v=<DATABASE_ID>
+database_id: "your_database_id_here"
+
+# Enable debug logging
+# Logs are written to debug.log in the current directory
+debug: false
+
+# Directory for caching Notion pages
+# Default: ~/.cache/notion-tui
+cache_dir: "~/.cache/notion-tui"
