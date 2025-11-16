@@ -1,0 +1,71 @@
+version: 2
+
+project_name: notion-tui
+
+before:
+  hooks:
+    - go mod download
+    - go mod tidy
+    - go test -race ./...
+
+builds:
+  - main: ./cmd/main.go
+    id: notion-tui
+    binary: notion-tui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - 7
+    ldflags:
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -s
+      - -w
+    flags:
+      - -trimpath
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: '{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    files:
+      - README.md
+      - LICENSE
+      - .env.example
+
+checksum:
+  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: '{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}'
+
+release:
+  github:
+    owner: Panandika
+    name: notion-tui
+  draft: false
+  prerelease: auto
+  name_template: '{{.ProjectName}} {{.Version}}'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch

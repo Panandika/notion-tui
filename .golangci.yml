@@ -1,0 +1,111 @@
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - testdata
+    - node_modules
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - gosimple
+    - gosec
+    - misspell
+    - gocritic
+    - unconvert
+    - unparam
+    - typecheck
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/Panandika/notion-tui
+  gocritic:
+    enabled-checks:
+      - appendAssign
+      - argOrder
+      - assignOp
+      - badCall
+      - badCond
+      - badLock
+      - badSortSlice
+      - builtinShadow
+      - captLocal
+      - caseOrder
+      - codegenComment
+      - commentedOutCode
+      - commentedOutImport
+      - defaultCaseOrder
+      - deferUnlambda
+      - deprecatedComment
+      - docStubsChecker
+      - dupArg
+      - dupBranchBody
+      - dupCase
+      - dupImport
+      - dupSubExpr
+      - elseif
+      - equalFold
+      - evalOrder
+      - exitAfterDefer
+      - explicitStringConversion
+      - flagDeref
+      - flagName
+      - flagValueNil
+      - floatCompare
+      - floatEq
+      - hexOffsetMismatch
+      - ifElseChain
+      - importShadow
+      - indexAlloc
+      - initClause
+      - isInfinite
+      - isSorted
+      - lineLengthLimit
+      - localImport
+      - mapKey
+      - methodExprCall
+      - misnamedUnderscoreVar
+      - nestingLevel
+      - newDeref
+      - nilValReturn
+      - nolintlint
+      - octalLiteral
+      - offByOne
+      - paramTypeCombine
+      - preferFilepathJoin
+      - preferFprint
+      - preferStringWriter
+      - preferWriteByte
+      - ptrToRefParam
+      - rangeExprCopy
+      - rangeValCopy
+      - redundantSprint
+      - regexpMust
+      - regexpPattern
+      - regexpSimplify
+      - returnAfterUndefer
+      - ruleguard
+      - singleCaseSwitch
+      - sliceKey
+      - sloppyLen
+    disabled-checks:
+      - lineLengthLimit
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - gosec
+        - unparam
+    - text: "should not be capitalized"
+      linters:
+        - golint
