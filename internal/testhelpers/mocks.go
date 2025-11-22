@@ -17,7 +17,9 @@ type MockNotionClient struct {
 	GetPageFunc       func(ctx context.Context, id string) (*notionapi.Page, error)
 	QueryDatabaseFunc func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error)
 	GetBlocksFunc     func(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error)
+	GetBlockFunc      func(ctx context.Context, id string) (notionapi.Block, error)
 	UpdatePageFunc    func(ctx context.Context, id string, req *notionapi.PageUpdateRequest) (*notionapi.Page, error)
+	UpdateBlockFunc   func(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error)
 	AppendBlocksFunc  func(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
 	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
 
@@ -25,7 +27,9 @@ type MockNotionClient struct {
 	GetPageCalls       []GetPageCall
 	QueryDatabaseCalls []QueryDatabaseCall
 	GetBlocksCalls     []GetBlocksCall
+	GetBlockCalls      []GetBlockCall
 	UpdatePageCalls    []UpdatePageCall
+	UpdateBlockCalls   []UpdateBlockCall
 	AppendBlocksCalls  []AppendBlocksCall
 	DeleteBlockCalls   []DeleteBlockCall
 
@@ -33,6 +37,7 @@ type MockNotionClient struct {
 	PageToReturn         *notionapi.Page
 	DatabaseToReturn     *notionapi.DatabaseQueryResponse
 	BlocksToReturn       *notionapi.GetChildrenResponse
+	BlockToReturn        notionapi.Block
 	AppendResponseReturn *notionapi.AppendBlockChildrenResponse
 	DeletedBlockReturn   notionapi.Block
 	ErrorToReturn        error
@@ -58,11 +63,24 @@ type GetBlocksCall struct {
 	Pagination *notionapi.Pagination
 }
 
+// GetBlockCall records a call to GetBlock.
+type GetBlockCall struct {
+	Ctx context.Context
+	ID  string
+}
+
 // UpdatePageCall records a call to UpdatePage.
 type UpdatePageCall struct {
 	Ctx     context.Context
 	ID      string
 	Request *notionapi.PageUpdateRequest
+}
+
+// UpdateBlockCall records a call to UpdateBlock.
+type UpdateBlockCall struct {
+	Ctx     context.Context
+	ID      string
+	Request *notionapi.BlockUpdateRequest
 }
 
 // AppendBlocksCall records a call to AppendBlocks.
@@ -84,7 +102,9 @@ func NewMockNotionClient() *MockNotionClient {
 		GetPageCalls:       make([]GetPageCall, 0),
 		QueryDatabaseCalls: make([]QueryDatabaseCall, 0),
 		GetBlocksCalls:     make([]GetBlocksCall, 0),
+		GetBlockCalls:      make([]GetBlockCall, 0),
 		UpdatePageCalls:    make([]UpdatePageCall, 0),
+		UpdateBlockCalls:   make([]UpdateBlockCall, 0),
 		AppendBlocksCalls:  make([]AppendBlocksCall, 0),
 		DeleteBlockCalls:   make([]DeleteBlockCall, 0),
 	}
@@ -164,6 +184,30 @@ func (m *MockNotionClient) GetBlocks(ctx context.Context, id string,
 	return NewGetChildrenResponse(blocks), nil
 }
 
+// GetBlock retrieves a single block by ID.
+func (m *MockNotionClient) GetBlock(ctx context.Context, id string) (notionapi.Block, error) {
+	m.mu.Lock()
+	m.GetBlockCalls = append(m.GetBlockCalls, GetBlockCall{
+		Ctx: ctx,
+		ID:  id,
+	})
+	m.mu.Unlock()
+
+	if m.GetBlockFunc != nil {
+		return m.GetBlockFunc(ctx, id)
+	}
+
+	if m.ErrorToReturn != nil {
+		return nil, m.ErrorToReturn
+	}
+
+	if m.BlockToReturn != nil {
+		return m.BlockToReturn, nil
+	}
+
+	return NewParagraphBlock("Test block content"), nil
+}
+
 // UpdatePage updates a page's properties.
 func (m *MockNotionClient) UpdatePage(ctx context.Context, id string,
 	req *notionapi.PageUpdateRequest) (*notionapi.Page, error) {
@@ -188,6 +232,32 @@ func (m *MockNotionClient) UpdatePage(ctx context.Context, id string,
 	}
 
 	return NewTestPage(id, "Updated Page"), nil
+}
+
+// UpdateBlock updates a block's content.
+func (m *MockNotionClient) UpdateBlock(ctx context.Context, id string,
+	req *notionapi.BlockUpdateRequest) (notionapi.Block, error) {
+	m.mu.Lock()
+	m.UpdateBlockCalls = append(m.UpdateBlockCalls, UpdateBlockCall{
+		Ctx:     ctx,
+		ID:      id,
+		Request: req,
+	})
+	m.mu.Unlock()
+
+	if m.UpdateBlockFunc != nil {
+		return m.UpdateBlockFunc(ctx, id, req)
+	}
+
+	if m.ErrorToReturn != nil {
+		return nil, m.ErrorToReturn
+	}
+
+	if m.BlockToReturn != nil {
+		return m.BlockToReturn, nil
+	}
+
+	return NewParagraphBlock("Updated block content"), nil
 }
 
 // AppendBlocks appends blocks to a page or block.
@@ -248,7 +318,8 @@ func (m *MockNotionClient) CallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.GetPageCalls) + len(m.QueryDatabaseCalls) + len(m.GetBlocksCalls) +
-		len(m.UpdatePageCalls) + len(m.AppendBlocksCalls) + len(m.DeleteBlockCalls)
+		len(m.GetBlockCalls) + len(m.UpdatePageCalls) + len(m.UpdateBlockCalls) +
+		len(m.AppendBlocksCalls) + len(m.DeleteBlockCalls)
 }
 
 // GetPageCallCount returns the number of calls to GetPage.
@@ -272,11 +343,25 @@ func (m *MockNotionClient) GetBlocksCallCount() int {
 	return len(m.GetBlocksCalls)
 }
 
+// GetBlockCallCount returns the number of calls to GetBlock.
+func (m *MockNotionClient) GetBlockCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.GetBlockCalls)
+}
+
 // UpdatePageCallCount returns the number of calls to UpdatePage.
 func (m *MockNotionClient) UpdatePageCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.UpdatePageCalls)
+}
+
+// UpdateBlockCallCount returns the number of calls to UpdateBlock.
+func (m *MockNotionClient) UpdateBlockCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.UpdateBlockCalls)
 }
 
 // AppendBlocksCallCount returns the number of calls to AppendBlocks.
@@ -323,6 +408,16 @@ func (m *MockNotionClient) LastGetBlocksCall() *GetBlocksCall {
 	return &m.GetBlocksCalls[len(m.GetBlocksCalls)-1]
 }
 
+// LastGetBlockCall returns the most recent GetBlock call, or nil if none.
+func (m *MockNotionClient) LastGetBlockCall() *GetBlockCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.GetBlockCalls) == 0 {
+		return nil
+	}
+	return &m.GetBlockCalls[len(m.GetBlockCalls)-1]
+}
+
 // LastUpdatePageCall returns the most recent UpdatePage call, or nil if none.
 func (m *MockNotionClient) LastUpdatePageCall() *UpdatePageCall {
 	m.mu.Lock()
@@ -331,6 +426,16 @@ func (m *MockNotionClient) LastUpdatePageCall() *UpdatePageCall {
 		return nil
 	}
 	return &m.UpdatePageCalls[len(m.UpdatePageCalls)-1]
+}
+
+// LastUpdateBlockCall returns the most recent UpdateBlock call, or nil if none.
+func (m *MockNotionClient) LastUpdateBlockCall() *UpdateBlockCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.UpdateBlockCalls) == 0 {
+		return nil
+	}
+	return &m.UpdateBlockCalls[len(m.UpdateBlockCalls)-1]
 }
 
 // LastAppendBlocksCall returns the most recent AppendBlocks call, or nil if none.
@@ -361,20 +466,25 @@ func (m *MockNotionClient) Reset() {
 	m.GetPageCalls = make([]GetPageCall, 0)
 	m.QueryDatabaseCalls = make([]QueryDatabaseCall, 0)
 	m.GetBlocksCalls = make([]GetBlocksCall, 0)
+	m.GetBlockCalls = make([]GetBlockCall, 0)
 	m.UpdatePageCalls = make([]UpdatePageCall, 0)
+	m.UpdateBlockCalls = make([]UpdateBlockCall, 0)
 	m.AppendBlocksCalls = make([]AppendBlocksCall, 0)
 	m.DeleteBlockCalls = make([]DeleteBlockCall, 0)
 
 	m.GetPageFunc = nil
 	m.QueryDatabaseFunc = nil
 	m.GetBlocksFunc = nil
+	m.GetBlockFunc = nil
 	m.UpdatePageFunc = nil
+	m.UpdateBlockFunc = nil
 	m.AppendBlocksFunc = nil
 	m.DeleteBlockFunc = nil
 
 	m.PageToReturn = nil
 	m.DatabaseToReturn = nil
 	m.BlocksToReturn = nil
+	m.BlockToReturn = nil
 	m.AppendResponseReturn = nil
 	m.DeletedBlockReturn = nil
 	m.ErrorToReturn = nil
@@ -405,6 +515,13 @@ func (m *MockNotionClient) WithDatabase(db *notionapi.DatabaseQueryResponse) *Mo
 // Returns the mock for chaining.
 func (m *MockNotionClient) WithBlocks(resp *notionapi.GetChildrenResponse) *MockNotionClient {
 	m.BlocksToReturn = resp
+	return m
+}
+
+// WithBlock configures the mock to return a specific block.
+// Returns the mock for chaining.
+func (m *MockNotionClient) WithBlock(block notionapi.Block) *MockNotionClient {
+	m.BlockToReturn = block
 	return m
 }
 

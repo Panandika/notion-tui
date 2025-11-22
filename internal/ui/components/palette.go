@@ -185,6 +185,15 @@ func (p *CommandPalette) Close() {
 	p.list.ResetFilter()
 }
 
+// Toggle toggles the visibility of the command palette.
+func (p *CommandPalette) Toggle() {
+	if p.isOpen {
+		p.Close()
+	} else {
+		p.Open()
+	}
+}
+
 // IsOpen returns true if the palette is currently open.
 func (p CommandPalette) IsOpen() bool {
 	return p.isOpen

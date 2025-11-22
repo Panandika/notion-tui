@@ -8,6 +8,9 @@ type errorMsg struct {
 	err     error
 }
 
+// ErrorMsg is the exported type for error messages.
+type ErrorMsg = errorMsg
+
 // Error implements the error interface for errorMsg.
 func (e errorMsg) Error() string {
 	if e.err != nil {
@@ -29,19 +32,19 @@ func NewErrorMsg(message string, err error) errorMsg {
 	}
 }
 
-// navigationMsg requests navigation to a specific page.
-type navigationMsg struct {
+// NavigationMsg requests navigation to a specific page.
+type NavigationMsg struct {
 	pageID string
 }
 
 // PageID returns the target page ID.
-func (n navigationMsg) PageID() string {
+func (n NavigationMsg) PageID() string {
 	return n.pageID
 }
 
 // NewNavigationMsg creates a new navigation message.
-func NewNavigationMsg(pageID string) navigationMsg {
-	return navigationMsg{pageID: pageID}
+func NewNavigationMsg(pageID string) NavigationMsg {
+	return NavigationMsg{pageID: pageID}
 }
 
 // loadingMsg indicates loading state change.
@@ -64,6 +67,9 @@ type contentLoadedMsg struct {
 	content string
 	err     error
 }
+
+// ContentLoadedMsg is the exported type for content loaded messages.
+type ContentLoadedMsg = contentLoadedMsg
 
 // Content returns the loaded content.
 func (c contentLoadedMsg) Content() string {

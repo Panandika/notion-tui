@@ -98,3 +98,28 @@ func (c *Client) DeleteBlock(ctx context.Context, id string) (notionapi.Block, e
 	}
 	return block, nil
 }
+
+// GetBlock retrieves a single block by ID.
+func (c *Client) GetBlock(ctx context.Context, id string) (notionapi.Block, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+	block, err := c.api.Block.Get(ctx, notionapi.BlockID(id))
+	if err != nil {
+		return nil, fmt.Errorf("get block %s: %w", id, err)
+	}
+	return block, nil
+}
+
+// UpdateBlock updates a block's properties.
+func (c *Client) UpdateBlock(ctx context.Context, id string,
+	req *notionapi.BlockUpdateRequest) (notionapi.Block, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+	block, err := c.api.Block.Update(ctx, notionapi.BlockID(id), req)
+	if err != nil {
+		return nil, fmt.Errorf("update block %s: %w", id, err)
+	}
+	return block, nil
+}

@@ -102,7 +102,10 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and run the TUI
-	model := ui.NewModel(cfg)
+	model := ui.NewModel(ui.NewModelInput{
+		Config: cfg,
+		Cache:  nil, // Will use default cache
+	})
 	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
