@@ -10,11 +10,13 @@ import (
 
 	"github.com/Panandika/notion-tui/internal/config"
 	"github.com/Panandika/notion-tui/internal/ui"
+	"github.com/Panandika/notion-tui/internal/version"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "notion-tui",
-	Short: "A terminal UI for Notion",
+	Use:     "notion-tui",
+	Short:   "A terminal UI for Notion",
+	Version: version.Short(),
 	Long: `notion-tui is a keyboard-driven terminal interface for browsing,
 editing, and managing your Notion databases and pages.
 

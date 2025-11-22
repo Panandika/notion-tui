@@ -3,6 +3,7 @@ package components
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
@@ -633,6 +634,8 @@ func TestStatusBarConstants(t *testing.T) {
 	assert.Equal(t, "SYNCING", StatusSyncing)
 	assert.Equal(t, "OFFLINE", StatusOffline)
 	assert.Equal(t, "ERROR", StatusError)
+	assert.Equal(t, "CONNECTED", StatusConnected)
+	assert.Equal(t, "DISCONNECTED", StatusDisconnect)
 }
 
 func TestStatusBarMultipleUpdates(t *testing.T) {
@@ -664,4 +667,335 @@ func TestStatusBarMultipleUpdates(t *testing.T) {
 	view := sb.View()
 	assert.Contains(t, view, ModeBrowse)
 	assert.Contains(t, view, StatusSynced)
+}
+
+func TestConnectionState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		state             ConnectionState
+		expectedSyncState string
+	}{
+		{
+			name:              "connected state",
+			state:             ConnectionStateConnected,
+			expectedSyncState: StatusSynced,
+		},
+		{
+			name:              "offline state",
+			state:             ConnectionStateOffline,
+			expectedSyncState: StatusOffline,
+		},
+		{
+			name:              "error state",
+			state:             ConnectionStateError,
+			expectedSyncState: StatusError,
+		},
+		{
+			name:              "unknown state",
+			state:             ConnectionStateUnknown,
+			expectedSyncState: StatusSynced, // Default remains unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sb := NewStatusBar()
+			sb.SetConnectionState(tt.state)
+
+			assert.Equal(t, tt.state, sb.ConnectionState())
+			assert.Equal(t, tt.expectedSyncState, sb.SyncStatus())
+		})
+	}
+}
+
+func TestLastSyncTime(t *testing.T) {
+	t.Parallel()
+
+	sb := NewStatusBar()
+
+	// Test initial state (zero time)
+	assert.True(t, sb.LastSyncTime().IsZero())
+
+	// Set last sync time
+	syncTime := time.Now()
+	sb.SetLastSyncTime(syncTime)
+
+	assert.Equal(t, syncTime, sb.LastSyncTime())
+}
+
+func TestShowSyncTime(t *testing.T) {
+	t.Parallel()
+
+	sb := NewStatusBar()
+
+	// Test initial state (disabled)
+	assert.False(t, sb.ShowSyncTime())
+
+	// Enable sync time display
+	sb.SetShowSyncTime(true)
+	assert.True(t, sb.ShowSyncTime())
+
+	// Disable sync time display
+	sb.SetShowSyncTime(false)
+	assert.False(t, sb.ShowSyncTime())
+}
+
+func TestUpdateSyncSuccess(t *testing.T) {
+	t.Parallel()
+
+	sb := NewStatusBar()
+
+	// Set initial error state
+	sb.SetConnectionState(ConnectionStateError)
+	assert.Equal(t, ConnectionStateError, sb.ConnectionState())
+
+	// Update to success
+	sb.UpdateSyncSuccess()
+
+	assert.Equal(t, ConnectionStateConnected, sb.ConnectionState())
+	assert.Equal(t, StatusSynced, sb.SyncStatus())
+	assert.False(t, sb.LastSyncTime().IsZero())
+}
+
+func TestUpdateSyncError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		isNetworkError    bool
+		expectedConnState ConnectionState
+		expectedSyncState string
+	}{
+		{
+			name:              "network error",
+			isNetworkError:    true,
+			expectedConnState: ConnectionStateOffline,
+			expectedSyncState: StatusOffline,
+		},
+		{
+			name:              "non-network error",
+			isNetworkError:    false,
+			expectedConnState: ConnectionStateError,
+			expectedSyncState: StatusError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sb := NewStatusBar()
+			sb.UpdateSyncError(tt.isNetworkError)
+
+			assert.Equal(t, tt.expectedConnState, sb.ConnectionState())
+			assert.Equal(t, tt.expectedSyncState, sb.SyncStatus())
+		})
+	}
+}
+
+func TestGetConnectionIndicator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		state             ConnectionState
+		expectedIndicator string
+	}{
+		{
+			name:              "connected indicator",
+			state:             ConnectionStateConnected,
+			expectedIndicator: "●",
+		},
+		{
+			name:              "offline indicator",
+			state:             ConnectionStateOffline,
+			expectedIndicator: "○",
+		},
+		{
+			name:              "error indicator",
+			state:             ConnectionStateError,
+			expectedIndicator: "✗",
+		},
+		{
+			name:              "unknown indicator",
+			state:             ConnectionStateUnknown,
+			expectedIndicator: "?",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sb := NewStatusBar()
+			sb.SetConnectionState(tt.state)
+
+			indicator := sb.getConnectionIndicator()
+			assert.Equal(t, tt.expectedIndicator, indicator)
+		})
+	}
+}
+
+func TestFormatSyncTime(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		syncTime     time.Time
+		expectedText string
+	}{
+		{
+			name:         "zero time",
+			syncTime:     time.Time{},
+			expectedText: "",
+		},
+		{
+			name:         "just now",
+			syncTime:     time.Now().Add(-30 * time.Second),
+			expectedText: "just now",
+		},
+		{
+			name:         "1 minute ago",
+			syncTime:     time.Now().Add(-1 * time.Minute),
+			expectedText: "1m ago",
+		},
+		{
+			name:         "5 minutes ago",
+			syncTime:     time.Now().Add(-5 * time.Minute),
+			expectedText: "5m ago",
+		},
+		{
+			name:         "1 hour ago",
+			syncTime:     time.Now().Add(-1 * time.Hour),
+			expectedText: "1h ago",
+		},
+		{
+			name:         "3 hours ago",
+			syncTime:     time.Now().Add(-3 * time.Hour),
+			expectedText: "3h ago",
+		},
+		{
+			name:         "1 day ago",
+			syncTime:     time.Now().Add(-24 * time.Hour),
+			expectedText: "1d ago",
+		},
+		{
+			name:         "3 days ago",
+			syncTime:     time.Now().Add(-72 * time.Hour),
+			expectedText: "3d ago",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sb := NewStatusBar()
+			sb.SetLastSyncTime(tt.syncTime)
+
+			formatted := sb.formatSyncTime()
+			assert.Equal(t, tt.expectedText, formatted)
+		})
+	}
+}
+
+func TestStatusBarViewWithConnectionIndicator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		state        ConnectionState
+		syncTime     time.Time
+		showSyncTime bool
+		checkFunc    func(t *testing.T, view string)
+	}{
+		{
+			name:         "connected with sync time shown",
+			state:        ConnectionStateConnected,
+			syncTime:     time.Now().Add(-5 * time.Minute),
+			showSyncTime: true,
+			checkFunc: func(t *testing.T, view string) {
+				assert.Contains(t, view, "●") // Connected indicator
+				assert.Contains(t, view, "5m ago")
+			},
+		},
+		{
+			name:         "connected without sync time",
+			state:        ConnectionStateConnected,
+			syncTime:     time.Now(),
+			showSyncTime: false,
+			checkFunc: func(t *testing.T, view string) {
+				assert.Contains(t, view, "●") // Connected indicator
+				assert.NotContains(t, view, "ago")
+			},
+		},
+		{
+			name:         "offline indicator",
+			state:        ConnectionStateOffline,
+			syncTime:     time.Time{},
+			showSyncTime: false,
+			checkFunc: func(t *testing.T, view string) {
+				assert.Contains(t, view, "○") // Offline indicator
+				assert.Contains(t, view, StatusOffline)
+			},
+		},
+		{
+			name:         "error indicator",
+			state:        ConnectionStateError,
+			syncTime:     time.Time{},
+			showSyncTime: false,
+			checkFunc: func(t *testing.T, view string) {
+				assert.Contains(t, view, "✗") // Error indicator
+				assert.Contains(t, view, StatusError)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sb := NewStatusBar()
+			sb.SetConnectionState(tt.state)
+			sb.SetLastSyncTime(tt.syncTime)
+			sb.SetShowSyncTime(tt.showSyncTime)
+			sb.SetWidth(80)
+
+			view := sb.View()
+			tt.checkFunc(t, view)
+		})
+	}
+}
+
+func TestConnectionStateTransitions(t *testing.T) {
+	t.Parallel()
+
+	sb := NewStatusBar()
+
+	// Start in unknown state
+	assert.Equal(t, ConnectionStateUnknown, sb.ConnectionState())
+
+	// Transition to connected
+	sb.UpdateSyncSuccess()
+	assert.Equal(t, ConnectionStateConnected, sb.ConnectionState())
+	assert.Equal(t, StatusSynced, sb.SyncStatus())
+
+	// Transition to offline
+	sb.UpdateSyncError(true)
+	assert.Equal(t, ConnectionStateOffline, sb.ConnectionState())
+	assert.Equal(t, StatusOffline, sb.SyncStatus())
+
+	// Transition to error
+	sb.UpdateSyncError(false)
+	assert.Equal(t, ConnectionStateError, sb.ConnectionState())
+	assert.Equal(t, StatusError, sb.SyncStatus())
+
+	// Transition back to connected
+	sb.UpdateSyncSuccess()
+	assert.Equal(t, ConnectionStateConnected, sb.ConnectionState())
+	assert.Equal(t, StatusSynced, sb.SyncStatus())
 }

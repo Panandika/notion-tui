@@ -48,17 +48,23 @@ func NewNavigationMsg(pageID string) NavigationMsg {
 
 // pagesLoadedMsg is sent when pages are fetched from the database.
 type pagesLoadedMsg struct {
-	pages []Page
-	err   error
+	pages      []Page
+	hasMore    bool
+	nextCursor string
+	err        error
 }
 
 // ListPage wraps the Sidebar component with page listing logic.
 type ListPage struct {
 	sidebar      components.Sidebar
 	statusBar    components.StatusBar
+	spinner      components.Spinner
 	pageList     []Page
 	selectedIdx  int
 	loading      bool
+	loadingMore  bool
+	hasMore      bool
+	nextCursor   string
 	err          error
 	width        int
 	height       int
@@ -90,14 +96,20 @@ func NewListPage(input NewListPageInput) ListPage {
 	statusBar.SetWidth(input.Width)
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText("r: refresh | ?: help")
+	statusBar.SetHelpText("/: search | r: refresh | ?: help")
+
+	spinner := components.NewSpinner("Loading pages...")
 
 	return ListPage{
 		sidebar:      sidebar,
 		statusBar:    statusBar,
+		spinner:      spinner,
 		pageList:     []Page{},
 		selectedIdx:  -1,
 		loading:      true,
+		loadingMore:  false,
+		hasMore:      false,
+		nextCursor:   "",
 		err:          nil,
 		width:        input.Width,
 		height:       input.Height,
@@ -109,15 +121,16 @@ func NewListPage(input NewListPageInput) ListPage {
 
 // Init fetches pages from the database on initialization.
 func (lp *ListPage) Init() tea.Cmd {
-	return lp.fetchPagesCmd()
+	return tea.Batch(lp.spinner.Init(), lp.fetchPagesCmd())
 }
 
 // Update handles messages and returns the updated model and command.
 func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pagesLoadedMsg:
-		lp.loading = false
 		if msg.err != nil {
+			lp.loading = false
+			lp.loadingMore = false
 			lp.err = msg.err
 			lp.statusBar.SetSyncStatus(components.StatusError)
 			lp.statusBar.SetHelpText(fmt.Sprintf("Error: %v", msg.err))
@@ -125,10 +138,28 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		lp.err = nil
-		lp.pageList = msg.pages
+
+		// If loading more, append to existing pages; otherwise replace
+		wasLoadingMore := lp.loadingMore
+		lp.loading = false
+		lp.loadingMore = false
+
+		if wasLoadingMore && len(lp.pageList) > 0 && len(msg.pages) > 0 {
+			lp.pageList = append(lp.pageList, msg.pages...)
+		} else {
+			lp.pageList = msg.pages
+		}
+
+		lp.hasMore = msg.hasMore
+		lp.nextCursor = msg.nextCursor
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
-		lp.statusBar.SetHelpText(fmt.Sprintf("%d pages | r: refresh", len(lp.pageList)))
+
+		helpText := fmt.Sprintf("%d pages | r: refresh", len(lp.pageList))
+		if lp.hasMore {
+			helpText += " | m: load more"
+		}
+		lp.statusBar.SetHelpText(helpText)
 		return lp, nil
 
 	case components.ItemSelectedMsg:
@@ -139,12 +170,25 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		if msg.String() == "r" {
+		switch msg.String() {
+		case "r":
 			// Refresh page list
 			lp.loading = true
+			lp.hasMore = false
+			lp.nextCursor = ""
 			lp.statusBar.SetSyncStatus(components.StatusSyncing)
 			lp.statusBar.SetHelpText("Refreshing...")
 			return lp, lp.fetchPagesCmd()
+
+		case "m":
+			// Load more pages if available
+			if lp.hasMore && !lp.loadingMore {
+				lp.loadingMore = true
+				lp.spinner.SetMessage("Loading more pages...")
+				lp.statusBar.SetSyncStatus(components.StatusSyncing)
+				lp.statusBar.SetHelpText("Loading more pages...")
+				return lp, lp.loadMoreCmd()
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -155,10 +199,23 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return lp, nil
 	}
 
+	// Update spinner when loading
+	var cmds []tea.Cmd
+	if lp.loading || lp.loadingMore {
+		var spinnerCmd tea.Cmd
+		lp.spinner, spinnerCmd = lp.spinner.Update(msg)
+		cmds = append(cmds, spinnerCmd)
+	}
+
 	// Update sidebar
-	var cmd tea.Cmd
-	lp.sidebar, cmd = lp.sidebar.Update(msg)
-	return lp, cmd
+	var sidebarCmd tea.Cmd
+	lp.sidebar, sidebarCmd = lp.sidebar.Update(msg)
+	cmds = append(cmds, sidebarCmd)
+
+	// Update status bar based on sidebar search state
+	lp.updateStatusBarFromSidebar()
+
+	return lp, tea.Batch(cmds...)
 }
 
 // View renders the list page.
@@ -167,10 +224,14 @@ func (lp *ListPage) View() string {
 		loadingStyle := lipgloss.NewStyle().
 			Width(lp.width).
 			Height(lp.height-2).
-			Align(lipgloss.Center, lipgloss.Center).
-			Foreground(lipgloss.Color("#7C3AED"))
+			Align(lipgloss.Center, lipgloss.Center)
 
-		main := loadingStyle.Render("Loading pages...")
+		spinnerView := lp.spinner.View()
+		if lp.loadingMore {
+			spinnerView = lp.spinner.View() + fmt.Sprintf(" (%d loaded)", len(lp.pageList))
+		}
+
+		main := loadingStyle.Render(spinnerView)
 		status := lp.statusBar.View()
 
 		return lipgloss.JoinVertical(lipgloss.Left, main, status)
@@ -254,7 +315,62 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 			pages = append(pages, page)
 		}
 
-		return pagesLoadedMsg{pages: pages}
+		return pagesLoadedMsg{
+			pages:      pages,
+			hasMore:    resp.HasMore,
+			nextCursor: string(resp.NextCursor),
+		}
+	}
+}
+
+// loadMoreCmd returns a command that fetches the next page of results.
+func (lp *ListPage) loadMoreCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		if lp.notionClient == nil {
+			return pagesLoadedMsg{
+				err: fmt.Errorf("notion client not initialized"),
+			}
+		}
+
+		if lp.nextCursor == "" {
+			return pagesLoadedMsg{
+				err: fmt.Errorf("no cursor available for pagination"),
+			}
+		}
+
+		// Create pagination request with the next cursor
+		req := &notionapi.DatabaseQueryRequest{
+			StartCursor: notionapi.Cursor(lp.nextCursor),
+		}
+
+		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, req)
+		if err != nil {
+			return pagesLoadedMsg{
+				err: fmt.Errorf("fetch more pages: %w", err),
+			}
+		}
+
+		pages := make([]Page, 0, len(resp.Results))
+		for _, p := range resp.Results {
+			title := extractTitle(&p)
+			status := extractStatus(&p)
+
+			page := NewPage(
+				string(p.ID),
+				title,
+				status,
+				p.LastEditedTime,
+			)
+			pages = append(pages, page)
+		}
+
+		return pagesLoadedMsg{
+			pages:      pages,
+			hasMore:    resp.HasMore,
+			nextCursor: string(resp.NextCursor),
+		}
 	}
 }
 
@@ -345,5 +461,38 @@ func formatTime(t time.Time) string {
 		return fmt.Sprintf("%d weeks ago", weeks)
 	default:
 		return t.Format("Jan 2, 2006")
+	}
+}
+
+// HasMore returns whether there are more pages to load.
+func (lp *ListPage) HasMore() bool {
+	return lp.hasMore
+}
+
+// NextCursor returns the cursor for the next page of results.
+func (lp *ListPage) NextCursor() string {
+	return lp.nextCursor
+}
+
+// IsLoadingMore returns whether the page is currently loading more results.
+func (lp *ListPage) IsLoadingMore() bool {
+	return lp.loadingMore
+}
+
+// updateStatusBarFromSidebar updates the status bar based on sidebar search state.
+func (lp *ListPage) updateStatusBarFromSidebar() {
+	if lp.sidebar.IsFiltering() {
+		filter := lp.sidebar.FilterValue()
+		visible := lp.sidebar.VisibleItemCount()
+		total := len(lp.pageList)
+		helpText := fmt.Sprintf("Filter: %s | %d/%d pages | ESC: clear", filter, visible, total)
+		lp.statusBar.SetHelpText(helpText)
+	} else if !lp.loading && !lp.loadingMore {
+		// Restore normal help text
+		helpText := fmt.Sprintf("%d pages | /: search | r: refresh", len(lp.pageList))
+		if lp.hasMore {
+			helpText += " | m: load more"
+		}
+		lp.statusBar.SetHelpText(helpText)
 	}
 }

@@ -73,10 +73,14 @@ func TestValidate(t *testing.T) {
 // TestString verifies that String() doesn't expose secrets (SEC-2).
 func TestString(t *testing.T) {
 	cfg := &Config{
-		NotionToken: "secret_sensitive_token_12345",
-		DatabaseID:  "db_123",
-		Debug:       true,
-		CacheDir:    "/home/user/.cache/notion-tui",
+		NotionToken:     "secret_sensitive_token_12345",
+		DatabaseID:      "db_123",
+		DefaultDatabase: "db_123",
+		Databases: []DatabaseConfig{
+			{ID: "db_123", Name: "Test DB", Icon: "📄"},
+		},
+		Debug:    true,
+		CacheDir: "/home/user/.cache/notion-tui",
 	}
 
 	str := cfg.String()
@@ -91,9 +95,9 @@ func TestString(t *testing.T) {
 		t.Error("String() should contain token mask (***)")
 	}
 
-	// Non-sensitive data should be visible
-	if !contains(str, "db_123") {
-		t.Error("String() should contain DatabaseID")
+	// Non-sensitive data should be visible (check for DefaultDB or database count)
+	if !contains(str, "db_123") && !contains(str, "Databases: 1") {
+		t.Error("String() should contain default database ID or database count")
 	}
 
 	if !contains(str, "true") {

@@ -9,7 +9,7 @@ before:
     - go test -race ./...
 
 builds:
-  - main: ./cmd/main.go
+  - main: ./main.go
     id: notion-tui
     binary: notion-tui
     env:
@@ -25,9 +25,10 @@ builds:
     goarm:
       - 7
     ldflags:
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/Panandika/notion-tui/internal/version.Version={{.Version}}
+      - -X github.com/Panandika/notion-tui/internal/version.Commit={{.Commit}}
+      - -X github.com/Panandika/notion-tui/internal/version.Date={{.Date}}
+      - -X github.com/Panandika/notion-tui/internal/version.BuiltBy=goreleaser
       - -s
       - -w
     flags:
@@ -42,6 +43,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - config.example.yaml
       - .env.example
 
 checksum:

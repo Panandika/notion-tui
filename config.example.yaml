@@ -11,19 +11,134 @@
 # 3. Configuration file (~/.config/notion-tui/config.yaml or via --config flag)
 # 4. Default values
 
-# Your Notion API token
-# Generate at: https://www.notion.so/profile/integrations
-# DO NOT commit this to version control
-notion_token: "secret_xxx"
+# ============================================================================
+# REQUIRED: Notion API Token
+# ============================================================================
 
-# ID of the Notion database to open by default
-# Find in the URL: notion.so/...?v=<DATABASE_ID>
-database_id: "your_database_id_here"
+# Your Notion API token (required)
+# How to get:
+#   1. Go to https://www.notion.so/my-integrations
+#   2. Click "+ New integration"
+#   3. Give it a name (e.g., "Notion TUI")
+#   4. Copy the "Integration Token"
+#
+# SECURITY: DO NOT commit this to version control!
+notion_token: "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-# Enable debug logging
-# Logs are written to debug.log in the current directory
+# ============================================================================
+# DATABASES CONFIGURATION
+# ============================================================================
+
+# Option 1: Single database (simple configuration)
+# Uncomment and set this if you only work with one database
+# database_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Option 2: Multiple databases (recommended)
+# Define multiple databases with names and icons for easy switching
+# Get database ID from URL: https://notion.so/workspace/DATABASE_ID?v=...
+databases:
+  - id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    name: "My Tasks"
+    icon: "✅"
+    # Optional: description for this database
+    # description: "Personal task tracker"
+
+  - id: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+    name: "Notes"
+    icon: "📝"
+    # description: "Research notes and documentation"
+
+  - id: "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
+    name: "Projects"
+    icon: "🚀"
+    # description: "Active projects and roadmaps"
+
+  # Add more databases as needed
+  # - id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  #   name: "Books"
+  #   icon: "📚"
+
+# Default database to show on startup (use one of the database IDs above)
+# If not set, the first database in the list will be used
+default_database: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# ============================================================================
+# OPTIONAL SETTINGS
+# ============================================================================
+
+# Enable debug logging (default: false)
+# When enabled, logs are written to debug.log in the current directory
+# Useful for troubleshooting API issues or performance problems
 debug: false
 
-# Directory for caching Notion pages
-# Default: ~/.cache/notion-tui
+# Directory for caching Notion pages (default: ~/.cache/notion-tui)
+# Caching enables:
+#   - Faster page loading
+#   - Offline access to previously viewed pages
+#   - Reduced API calls (respects rate limits)
+# Set to empty string ("") to disable caching
 cache_dir: "~/.cache/notion-tui"
+
+# ============================================================================
+# EXAMPLES
+# ============================================================================
+
+# Example 1: Minimal single-database setup
+# ---
+# notion_token: "secret_xxx"
+# database_id: "my-database-id"
+
+# Example 2: Multi-database with custom cache
+# ---
+# notion_token: "secret_xxx"
+# databases:
+#   - id: "tasks-db-id"
+#     name: "Tasks"
+#     icon: "✅"
+#   - id: "notes-db-id"
+#     name: "Notes"
+#     icon: "📝"
+# default_database: "tasks-db-id"
+# cache_dir: "/custom/cache/path"
+
+# Example 3: Development setup with debug enabled
+# ---
+# notion_token: "secret_xxx"
+# database_id: "dev-db-id"
+# debug: true
+# cache_dir: "./local-cache"
+
+# ============================================================================
+# SHARING DATABASES WITH INTEGRATION
+# ============================================================================
+
+# IMPORTANT: After creating your integration, you must share each database:
+#
+# 1. Open the database in Notion (web or desktop app)
+# 2. Click the "..." menu in the top right
+# 3. Select "Add connections"
+# 4. Search for and select your integration name
+# 5. Click "Confirm"
+#
+# Without this step, the integration cannot access your database!
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+
+# "Invalid token" error:
+#   - Verify token starts with "secret_"
+#   - Check that you copied the entire token
+#   - Ensure the integration is still active
+
+# "Database not found" error:
+#   - Verify the database ID (32-character UUID)
+#   - Ensure database is shared with the integration
+#   - Check that you have the correct workspace
+
+# Performance issues:
+#   - Enable caching (cache_dir)
+#   - Check debug logs for API rate limiting
+#   - Consider reducing database size or pagination
+
+# For more help, see: https://github.com/Panandika/notion-tui#troubleshooting

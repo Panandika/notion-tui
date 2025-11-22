@@ -10,6 +10,7 @@ import (
 type commandItem struct {
 	name        string
 	description string
+	actionType  string // Type of action for routing
 	action      func() tea.Cmd
 }
 
@@ -31,6 +32,7 @@ func (c commandItem) FilterValue() string {
 // CommandExecutedMsg is sent when a command is executed.
 type CommandExecutedMsg struct {
 	CommandName string
+	ActionType  string // Type of action for routing ("search", "refresh", "switch-db", etc.)
 }
 
 // CommandPalette is a fuzzy-searchable command palette component.
@@ -95,23 +97,39 @@ func NewCommandPalette() CommandPalette {
 func (p *CommandPalette) addBuiltInCommands() {
 	builtInCommands := []commandItem{
 		{
-			name:        "New Page",
-			description: "Create a new Notion page",
-			action:      func() tea.Cmd { return nil },
-		},
-		{
-			name:        "Search All",
+			name:        "Search All Pages",
 			description: "Search across all pages and content",
+			actionType:  "search",
 			action:      func() tea.Cmd { return nil },
 		},
 		{
-			name:        "Refresh",
+			name:        "Switch Database",
+			description: "Switch to a different database",
+			actionType:  "switch-db",
+			action:      func() tea.Cmd { return nil },
+		},
+		{
+			name:        "Refresh Current View",
 			description: "Refresh current view from Notion",
+			actionType:  "refresh",
+			action:      func() tea.Cmd { return nil },
+		},
+		{
+			name:        "New Page",
+			description: "Create a new Notion page (coming soon)",
+			actionType:  "new-page",
+			action:      func() tea.Cmd { return nil },
+		},
+		{
+			name:        "Export Page",
+			description: "Export current page (coming soon)",
+			actionType:  "export",
 			action:      func() tea.Cmd { return nil },
 		},
 		{
 			name:        "Quit",
 			description: "Exit the application",
+			actionType:  "quit",
 			action:      func() tea.Cmd { return tea.Quit },
 		},
 	}
@@ -149,7 +167,10 @@ func (p CommandPalette) Update(msg tea.Msg) (CommandPalette, tea.Cmd) {
 					actionCmd := item.action()
 					return p, tea.Batch(
 						func() tea.Msg {
-							return CommandExecutedMsg{CommandName: item.name}
+							return CommandExecutedMsg{
+								CommandName: item.name,
+								ActionType:  item.actionType,
+							}
 						},
 						actionCmd,
 					)
@@ -200,10 +221,11 @@ func (p CommandPalette) IsOpen() bool {
 }
 
 // AddCommand adds a custom command to the palette.
-func (p *CommandPalette) AddCommand(name, desc string, action func() tea.Cmd) {
+func (p *CommandPalette) AddCommand(name, desc, actionType string, action func() tea.Cmd) {
 	newCmd := commandItem{
 		name:        name,
 		description: desc,
+		actionType:  actionType,
 		action:      action,
 	}
 

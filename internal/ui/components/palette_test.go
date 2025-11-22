@@ -24,7 +24,7 @@ func TestNewCommandPalette(t *testing.T) {
 			wantWidth:        60,
 			wantHeight:       15,
 			wantIsOpen:       false,
-			wantCommandCount: 4,
+			wantCommandCount: 6,
 		},
 	}
 
@@ -127,7 +127,7 @@ func TestAddCommand(t *testing.T) {
 			name:        "add single custom command",
 			commandName: "Custom Command",
 			commandDesc: "A custom command description",
-			wantCount:   5,
+			wantCount:   7, // 6 built-in + 1 custom
 		},
 	}
 
@@ -138,7 +138,7 @@ func TestAddCommand(t *testing.T) {
 			palette := NewCommandPalette()
 			initialCount := len(palette.Commands())
 
-			palette.AddCommand(tt.commandName, tt.commandDesc, func() tea.Cmd { return nil })
+			palette.AddCommand(tt.commandName, tt.commandDesc, "custom", func() tea.Cmd { return nil })
 
 			commands := palette.Commands()
 			assert.Equal(t, tt.wantCount, len(commands))
@@ -163,8 +163,8 @@ func TestFuzzySearch(t *testing.T) {
 	}{
 		{
 			name:         "filter by command name",
-			commandNames: []string{"New Page", "Search All", "Refresh", "Quit"},
-			wantFilters:  []string{"New Page", "Search All", "Refresh", "Quit"},
+			commandNames: []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			wantFilters:  []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
 		},
 	}
 
@@ -201,13 +201,13 @@ func TestEnterExecute(t *testing.T) {
 		{
 			name:            "execute first command",
 			setupKeys:       []string{},
-			wantCommandName: "New Page",
+			wantCommandName: "Search All Pages", // First command in new order
 			wantOpen:        false,
 		},
 		{
 			name:            "execute second command after navigation",
 			setupKeys:       []string{"down"},
-			wantCommandName: "Search All",
+			wantCommandName: "Switch Database", // Second command in new order
 			wantOpen:        false,
 		},
 	}
@@ -304,8 +304,8 @@ func TestBuiltInCommands(t *testing.T) {
 	}{
 		{
 			name:            "default built-in commands",
-			wantNames:       []string{"New Page", "Search All", "Refresh", "Quit"},
-			wantDescPartial: []string{"Create", "Search", "Refresh", "Exit"},
+			wantNames:       []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			wantDescPartial: []string{"Search", "Switch", "Refresh", "Create", "Export", "Exit"},
 		},
 	}
 
@@ -560,9 +560,9 @@ func TestMultipleAddCommands(t *testing.T) {
 	initialCount := len(palette.Commands())
 
 	// Add multiple commands
-	palette.AddCommand("Custom 1", "First custom", func() tea.Cmd { return nil })
-	palette.AddCommand("Custom 2", "Second custom", func() tea.Cmd { return nil })
-	palette.AddCommand("Custom 3", "Third custom", func() tea.Cmd { return nil })
+	palette.AddCommand("Custom 1", "First custom", "custom", func() tea.Cmd { return nil })
+	palette.AddCommand("Custom 2", "Second custom", "custom", func() tea.Cmd { return nil })
+	palette.AddCommand("Custom 3", "Third custom", "custom", func() tea.Cmd { return nil })
 
 	commands := palette.Commands()
 	assert.Equal(t, initialCount+3, len(commands))

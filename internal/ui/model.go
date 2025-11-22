@@ -42,6 +42,7 @@ type AppModel struct {
 	ready        bool
 	err          error
 	selectedPage *pages.Page
+	currentDBID  string // Currently active database ID
 }
 
 // NewModelInput contains the parameters for creating a new AppModel.
@@ -109,6 +110,7 @@ func NewModel(input NewModelInput) AppModel {
 		ready:        false,
 		err:          nil,
 		selectedPage: nil,
+		currentDBID:  input.Config.GetDatabaseID(),
 	}
 }
 
@@ -138,7 +140,7 @@ func (m *AppModel) initializePages() {
 		Height:       m.height,
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
-		DatabaseID:   m.config.DatabaseID,
+		DatabaseID:   m.config.GetDatabaseID(),
 	})
 	m.pages[PageList] = &listPage
 
@@ -242,8 +244,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case components.CommandExecutedMsg:
 		// Command palette executed a command
 		m.showPalette = false
-		// Handle command execution (future implementation)
-		return m, nil
+		return m, m.handleCommandExecution(msg)
+
+	case pages.DatabaseSelectedMsg:
+		// User selected a different database
+		m.currentDBID = msg.DatabaseID
+		// Refresh list page with new database
+		return m, m.switchDatabase(msg.DatabaseID)
 	}
 
 	// Delegate to current page
@@ -403,7 +410,7 @@ func (m *AppModel) createPage(pageID PageID) {
 			Height:       m.height,
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
-			DatabaseID:   m.config.DatabaseID,
+			DatabaseID:   m.currentDBID,
 		})
 		m.pages[pageID] = &listPage
 
@@ -424,6 +431,25 @@ func (m *AppModel) createPage(pageID PageID) {
 		// Edit page is created on-demand with specific page ID
 		// This case shouldn't be hit normally
 		// TODO: Implement EditPage creation
+
+	case PageSearch:
+		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
+			Width:        m.width,
+			Height:       m.height,
+			NotionClient: m.notionClient,
+			Cache:        m.cache,
+			DatabaseID:   m.currentDBID,
+		})
+		m.pages[pageID] = &searchPage
+
+	case PageDatabaseList:
+		dbListPage := pages.NewDatabaseListPage(pages.NewDatabaseListPageInput{
+			Width:       m.width,
+			Height:      m.height,
+			Databases:   m.config.Databases,
+			DefaultDBID: m.currentDBID,
+		})
+		m.pages[pageID] = &dbListPage
 	}
 }
 
@@ -450,4 +476,99 @@ func (m *AppModel) Navigator() *Navigator {
 // SetPageList updates the internal page list for sidebar rendering.
 func (m *AppModel) SetPageList(pagesList []pages.Page) {
 	m.pageList = pagesList
+}
+
+// handleCommandExecution routes command palette actions to appropriate handlers.
+func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea.Cmd {
+	switch msg.ActionType {
+	case "search":
+		// Navigate to search page
+		return m.navigateToSearch()
+
+	case "switch-db":
+		// Navigate to database list page
+		return m.navigateToDatabaseList()
+
+	case "refresh":
+		// Refresh current page
+		return m.refreshCurrentPage()
+
+	case "new-page":
+		// TODO: Implement new page creation
+		return nil
+
+	case "export":
+		// TODO: Implement export functionality
+		return nil
+
+	default:
+		return nil
+	}
+}
+
+// navigateToSearch navigates to the search page.
+func (m *AppModel) navigateToSearch() tea.Cmd {
+	// Create or update search page
+	searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
+		Width:        m.width,
+		Height:       m.height,
+		NotionClient: m.notionClient,
+		Cache:        m.cache,
+		DatabaseID:   m.currentDBID,
+	})
+	m.pages[PageSearch] = &searchPage
+
+	// Navigate to search page
+	return m.navigateTo(PageSearch)
+}
+
+// navigateToDatabaseList navigates to the database list page.
+func (m *AppModel) navigateToDatabaseList() tea.Cmd {
+	// Create or update database list page
+	dbListPage := pages.NewDatabaseListPage(pages.NewDatabaseListPageInput{
+		Width:       m.width,
+		Height:      m.height,
+		Databases:   m.config.Databases,
+		DefaultDBID: m.currentDBID,
+	})
+	m.pages[PageDatabaseList] = &dbListPage
+
+	// Navigate to database list page
+	return m.navigateTo(PageDatabaseList)
+}
+
+// refreshCurrentPage refreshes the current page.
+func (m *AppModel) refreshCurrentPage() tea.Cmd {
+	switch m.currentPage {
+	case PageList:
+		if page, ok := m.pages[PageList].(*pages.ListPage); ok {
+			return page.Refresh()
+		}
+	case PageDetail:
+		if page, ok := m.pages[PageDetail].(*pages.DetailPage); ok {
+			return page.Refresh()
+		}
+	}
+	return nil
+}
+
+// switchDatabase switches to a different database and refreshes the list page.
+func (m *AppModel) switchDatabase(databaseID string) tea.Cmd {
+	m.currentDBID = databaseID
+
+	// Recreate list page with new database
+	listPage := pages.NewListPage(pages.NewListPageInput{
+		Width:        m.width,
+		Height:       m.height,
+		NotionClient: m.notionClient,
+		Cache:        m.cache,
+		DatabaseID:   databaseID,
+	})
+	m.pages[PageList] = &listPage
+
+	// Navigate back to list page
+	m.navigator.Reset(PageList)
+	m.currentPage = PageList
+
+	return listPage.Init()
 }

@@ -193,8 +193,9 @@ func TestListPage_Init(t *testing.T) {
 	cmd := lp.Init()
 	assert.NotNil(t, cmd, "Init should return a command")
 
-	// Execute the command
-	msg := cmd()
+	// Init returns a batch, so we test the fetch directly
+	fetchCmd := lp.fetchPagesCmd()
+	msg := fetchCmd()
 	loadedMsg, ok := msg.(pagesLoadedMsg)
 	assert.True(t, ok, "Command should return pagesLoadedMsg")
 	assert.NoError(t, loadedMsg.err)
@@ -683,4 +684,269 @@ func TestFormatTime(t *testing.T) {
 			assert.Equal(t, tt.expectText, result)
 		})
 	}
+}
+
+func TestListPage_Pagination(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		firstResponse    *notionapi.DatabaseQueryResponse
+		secondResponse   *notionapi.DatabaseQueryResponse
+		expectFirstCount int
+		expectTotalCount int
+		expectHasMore    bool
+		expectNextCursor string
+	}{
+		{
+			name: "handles pagination with more pages",
+			firstResponse: &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-1", "Page 1", "Draft"),
+					newTestNotionPage("page-2", "Page 2", "Draft"),
+				},
+				HasMore:    true,
+				NextCursor: "cursor-123",
+			},
+			secondResponse: &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-3", "Page 3", "Draft"),
+					newTestNotionPage("page-4", "Page 4", "Draft"),
+				},
+				HasMore:    false,
+				NextCursor: "",
+			},
+			expectFirstCount: 2,
+			expectTotalCount: 4,
+			expectHasMore:    false,
+			expectNextCursor: "",
+		},
+		{
+			name: "handles single page with no more results",
+			firstResponse: &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-1", "Page 1", "Draft"),
+				},
+				HasMore:    false,
+				NextCursor: "",
+			},
+			expectFirstCount: 1,
+			expectTotalCount: 1,
+			expectHasMore:    false,
+			expectNextCursor: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callCount := 0
+			mockClient := &MockNotionClient{
+				QueryDatabaseFunc: func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+					callCount++
+					if callCount == 1 {
+						return tt.firstResponse, nil
+					}
+					return tt.secondResponse, nil
+				},
+			}
+
+			lp := NewListPage(NewListPageInput{
+				Width:        80,
+				Height:       24,
+				NotionClient: mockClient,
+				DatabaseID:   "test-db",
+			})
+
+			// Initial load
+			fetchCmd := lp.fetchPagesCmd()
+			msg := fetchCmd().(pagesLoadedMsg)
+			model, _ := lp.Update(msg)
+			updatedLP := model.(*ListPage)
+			lp = *updatedLP
+
+			assert.Len(t, lp.pageList, tt.expectFirstCount)
+			assert.Equal(t, tt.firstResponse.HasMore, lp.HasMore())
+			assert.Equal(t, string(tt.firstResponse.NextCursor), lp.NextCursor())
+
+			// Load more if available
+			if tt.secondResponse != nil && tt.firstResponse.HasMore {
+				lp.loadingMore = true
+				loadMoreCmd := lp.loadMoreCmd()
+				moreMsg := loadMoreCmd().(pagesLoadedMsg)
+				model, _ = lp.Update(moreMsg)
+				updatedLP = model.(*ListPage)
+				lp = *updatedLP
+
+				assert.Len(t, lp.pageList, tt.expectTotalCount)
+				assert.Equal(t, tt.expectHasMore, lp.HasMore())
+				assert.Equal(t, tt.expectNextCursor, lp.NextCursor())
+			}
+		})
+	}
+}
+
+func TestListPage_LoadMoreKey(t *testing.T) {
+	t.Parallel()
+
+	mockClient := &MockNotionClient{
+		QueryDatabaseFunc: func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			if req != nil && req.StartCursor != "" {
+				// Second page
+				return &notionapi.DatabaseQueryResponse{
+					Results: []notionapi.Page{
+						newTestNotionPage("page-3", "Page 3", "Draft"),
+					},
+					HasMore:    false,
+					NextCursor: "",
+				}, nil
+			}
+			// First page
+			return &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-1", "Page 1", "Draft"),
+					newTestNotionPage("page-2", "Page 2", "Draft"),
+				},
+				HasMore:    true,
+				NextCursor: "cursor-abc",
+			}, nil
+		},
+	}
+
+	lp := NewListPage(NewListPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		DatabaseID:   "test-db",
+	})
+
+	// Initial load - need to extract the fetch command from the batch
+	// Since Init returns a batch of spinner.Tick and fetchPagesCmd,
+	// we'll call fetchPagesCmd directly for testing
+	fetchCmd := lp.fetchPagesCmd()
+	msg := fetchCmd().(pagesLoadedMsg)
+	model, _ := lp.Update(msg)
+	updatedLP := model.(*ListPage)
+	lp = *updatedLP
+
+	assert.Len(t, lp.pageList, 2)
+	assert.True(t, lp.HasMore())
+
+	// Press 'm' to load more
+	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}
+	model, _ = lp.Update(keyMsg)
+	updatedLP = model.(*ListPage)
+	lp = *updatedLP
+
+	assert.True(t, lp.IsLoadingMore())
+
+	// Execute load more command directly
+	loadMoreCmd := lp.loadMoreCmd()
+	moreMsg := loadMoreCmd().(pagesLoadedMsg)
+	model, _ = lp.Update(moreMsg)
+	updatedLP = model.(*ListPage)
+	lp = *updatedLP
+
+	assert.Len(t, lp.pageList, 3)
+	assert.False(t, lp.HasMore())
+	assert.False(t, lp.IsLoadingMore())
+}
+
+func TestListPage_LoadMore_NoCursor(t *testing.T) {
+	t.Parallel()
+
+	mockClient := &MockNotionClient{
+		QueryDatabaseFunc: func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			return &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-1", "Page 1", "Draft"),
+				},
+				HasMore:    false,
+				NextCursor: "",
+			}, nil
+		},
+	}
+
+	lp := NewListPage(NewListPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		DatabaseID:   "test-db",
+	})
+	lp.hasMore = true
+	lp.nextCursor = ""
+	lp.loadingMore = true
+
+	cmd := lp.loadMoreCmd()
+	msg := cmd().(pagesLoadedMsg)
+
+	assert.Error(t, msg.err)
+	assert.Contains(t, msg.err.Error(), "no cursor available")
+}
+
+func TestListPage_PaginationView(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: &MockNotionClient{},
+		DatabaseID:   "test-db",
+	})
+	lp.loading = true
+	lp.loadingMore = true
+	lp.spinner.SetMessage("Loading more pages...")
+	lp.pageList = []Page{
+		newTestPage("page-1", "Page 1", "Draft"),
+		newTestPage("page-2", "Page 2", "Draft"),
+	}
+
+	view := lp.View()
+	// The view will contain the spinner with the message
+	assert.Contains(t, view, "(2 loaded)")
+}
+
+func TestListPage_RefreshClearsPagination(t *testing.T) {
+	t.Parallel()
+
+	mockClient := &MockNotionClient{
+		QueryDatabaseFunc: func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			return &notionapi.DatabaseQueryResponse{
+				Results: []notionapi.Page{
+					newTestNotionPage("page-1", "Fresh Page", "Draft"),
+				},
+				HasMore:    false,
+				NextCursor: "",
+			}, nil
+		},
+	}
+
+	lp := NewListPage(NewListPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		DatabaseID:   "test-db",
+	})
+	lp.loading = false
+	lp.hasMore = true
+	lp.nextCursor = "old-cursor"
+
+	// Refresh
+	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}
+	model, _ := lp.Update(keyMsg)
+	updatedLP := model.(*ListPage)
+	lp = *updatedLP
+
+	assert.True(t, lp.loading)
+	assert.False(t, lp.HasMore())
+	assert.Equal(t, "", lp.NextCursor())
+
+	// Execute refresh command directly
+	refreshCmd := lp.fetchPagesCmd()
+	refreshMsg := refreshCmd().(pagesLoadedMsg)
+	model, _ = lp.Update(refreshMsg)
+	updatedLP = model.(*ListPage)
+	lp = *updatedLP
+
+	assert.False(t, lp.HasMore())
+	assert.Equal(t, "", lp.NextCursor())
 }

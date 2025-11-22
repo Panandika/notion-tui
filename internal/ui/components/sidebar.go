@@ -139,6 +139,9 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Note: '/' key will be handled by the list itself to activate filtering
+		// We just need to ensure filtering is enabled (done in NewSidebar)
+
 		if msg.String() == "enter" && !s.list.SettingFilter() {
 			if item, ok := s.list.SelectedItem().(Item); ok {
 				s.selectedID = item.id
@@ -238,4 +241,14 @@ func (s Sidebar) FilterState() list.FilterState {
 // IsFiltering returns true if the sidebar is currently filtering.
 func (s Sidebar) IsFiltering() bool {
 	return s.list.SettingFilter()
+}
+
+// FilterValue returns the current filter value.
+func (s Sidebar) FilterValue() string {
+	return s.list.FilterValue()
+}
+
+// VisibleItemCount returns the number of items after filtering.
+func (s Sidebar) VisibleItemCount() int {
+	return len(s.list.VisibleItems())
 }

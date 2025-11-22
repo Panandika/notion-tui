@@ -1,7 +1,9 @@
 package components
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -15,10 +17,12 @@ const (
 
 // Sync status constants for the status bar display.
 const (
-	StatusSynced  = "SYNCED"
-	StatusSyncing = "SYNCING"
-	StatusOffline = "OFFLINE"
-	StatusError   = "ERROR"
+	StatusSynced     = "SYNCED"
+	StatusSyncing    = "SYNCING"
+	StatusOffline    = "OFFLINE"
+	StatusError      = "ERROR"
+	StatusConnected  = "CONNECTED"
+	StatusDisconnect = "DISCONNECTED"
 )
 
 // StatusBarStyles holds the styles for the status bar.
@@ -69,23 +73,42 @@ func DefaultStatusBarStyles() StatusBarStyles {
 	}
 }
 
+// ConnectionState represents the connection state to Notion API.
+type ConnectionState int
+
+const (
+	// ConnectionStateUnknown means connection state is not yet determined.
+	ConnectionStateUnknown ConnectionState = iota
+	// ConnectionStateConnected means successfully connected to Notion API.
+	ConnectionStateConnected
+	// ConnectionStateOffline means no network connectivity.
+	ConnectionStateOffline
+	// ConnectionStateError means connection error occurred.
+	ConnectionStateError
+)
+
 // StatusBar is a component that displays mode, sync status, and help text.
 type StatusBar struct {
-	mode       string
-	syncStatus string
-	helpText   string
-	width      int
-	styles     StatusBarStyles
+	mode            string
+	syncStatus      string
+	helpText        string
+	width           int
+	styles          StatusBarStyles
+	connectionState ConnectionState
+	lastSyncTime    time.Time
+	showSyncTime    bool
 }
 
 // NewStatusBar creates a new status bar with default values.
 func NewStatusBar() StatusBar {
 	return StatusBar{
-		mode:       ModeBrowse,
-		syncStatus: StatusSynced,
-		helpText:   "? for help",
-		width:      80,
-		styles:     DefaultStatusBarStyles(),
+		mode:            ModeBrowse,
+		syncStatus:      StatusSynced,
+		helpText:        "? for help",
+		width:           80,
+		styles:          DefaultStatusBarStyles(),
+		connectionState: ConnectionStateUnknown,
+		showSyncTime:    false,
 	}
 }
 
@@ -129,6 +152,66 @@ func (s StatusBar) Width() int {
 	return s.width
 }
 
+// SetConnectionState updates the connection state.
+func (s *StatusBar) SetConnectionState(state ConnectionState) {
+	s.connectionState = state
+
+	// Update sync status based on connection state
+	switch state {
+	case ConnectionStateConnected:
+		if s.syncStatus != StatusSyncing {
+			s.syncStatus = StatusSynced
+		}
+	case ConnectionStateOffline:
+		s.syncStatus = StatusOffline
+	case ConnectionStateError:
+		s.syncStatus = StatusError
+	}
+}
+
+// ConnectionState returns the current connection state.
+func (s StatusBar) ConnectionState() ConnectionState {
+	return s.connectionState
+}
+
+// SetLastSyncTime updates the last successful sync time.
+func (s *StatusBar) SetLastSyncTime(t time.Time) {
+	s.lastSyncTime = t
+}
+
+// LastSyncTime returns the last successful sync time.
+func (s StatusBar) LastSyncTime() time.Time {
+	return s.lastSyncTime
+}
+
+// SetShowSyncTime enables or disables showing the last sync time.
+func (s *StatusBar) SetShowSyncTime(show bool) {
+	s.showSyncTime = show
+}
+
+// ShowSyncTime returns whether sync time is shown.
+func (s StatusBar) ShowSyncTime() bool {
+	return s.showSyncTime
+}
+
+// UpdateSyncSuccess marks a successful sync and updates the connection state.
+func (s *StatusBar) UpdateSyncSuccess() {
+	s.lastSyncTime = time.Now()
+	s.connectionState = ConnectionStateConnected
+	s.syncStatus = StatusSynced
+}
+
+// UpdateSyncError marks a sync error and updates the connection state.
+func (s *StatusBar) UpdateSyncError(isNetworkError bool) {
+	if isNetworkError {
+		s.connectionState = ConnectionStateOffline
+		s.syncStatus = StatusOffline
+	} else {
+		s.connectionState = ConnectionStateError
+		s.syncStatus = StatusError
+	}
+}
+
 // getModeColor returns the appropriate color for the current mode.
 func (s StatusBar) getModeColor() lipgloss.Color {
 	switch s.mode {
@@ -155,21 +238,79 @@ func (s StatusBar) getSyncColor() lipgloss.Color {
 	}
 }
 
+// getConnectionIndicator returns a visual indicator for the connection state.
+func (s StatusBar) getConnectionIndicator() string {
+	switch s.connectionState {
+	case ConnectionStateConnected:
+		return "●" // Green dot
+	case ConnectionStateOffline:
+		return "○" // Gray dot
+	case ConnectionStateError:
+		return "✗" // Red X
+	default:
+		return "?" // Unknown
+	}
+}
+
+// formatSyncTime formats the last sync time as a human-readable string.
+func (s StatusBar) formatSyncTime() string {
+	if s.lastSyncTime.IsZero() {
+		return ""
+	}
+
+	now := time.Now()
+	diff := now.Sub(s.lastSyncTime)
+
+	switch {
+	case diff < time.Minute:
+		return "just now"
+	case diff < time.Hour:
+		minutes := int(diff.Minutes())
+		if minutes == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", minutes)
+	case diff < 24*time.Hour:
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", hours)
+	default:
+		days := int(diff.Hours() / 24)
+		if days == 1 {
+			return "1d ago"
+		}
+		return fmt.Sprintf("%dd ago", days)
+	}
+}
+
 // View renders the status bar with left + gap + right layout.
 func (s StatusBar) View() string {
 	if s.width <= 0 {
 		return ""
 	}
 
-	// Build left side: mode | sync status
+	// Build left side: mode | connection indicator sync status [sync time]
 	modeStyle := s.styles.Mode.Foreground(s.getModeColor())
 	syncStyle := s.styles.SyncStatus.Foreground(s.getSyncColor())
+	indicatorStyle := s.styles.SyncStatus.Foreground(s.getSyncColor())
 
 	modeText := modeStyle.Render(s.mode)
+	indicator := indicatorStyle.Render(s.getConnectionIndicator())
 	syncText := syncStyle.Render(s.syncStatus)
 	separator := s.styles.Container.Render(" | ")
 
-	leftContent := modeText + separator + syncText
+	// Build sync status with optional sync time
+	var syncContent string
+	if s.showSyncTime && !s.lastSyncTime.IsZero() && s.connectionState == ConnectionStateConnected {
+		syncTime := s.formatSyncTime()
+		syncContent = fmt.Sprintf("%s %s (%s)", indicator, syncText, syncTime)
+	} else {
+		syncContent = fmt.Sprintf("%s %s", indicator, syncText)
+	}
+
+	leftContent := modeText + separator + s.styles.Container.Render(syncContent)
 
 	// Build right side: help text
 	rightContent := s.styles.HelpText.Render(s.helpText)

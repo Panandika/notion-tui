@@ -835,3 +835,153 @@ func TestEditPageIntegration_LoadEditSave(t *testing.T) {
 		t.Errorf("expected 1 UpdateBlock call, got %d", mockClient.UpdateBlockCallCount())
 	}
 }
+
+func TestEditPageUpdate_RefreshBlock(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	block := testhelpers.NewParagraphBlock("Original text")
+	mockClient.WithBlock(block)
+
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+
+	// Load block first
+	loadedMsg := blockLoadedMsg{
+		block: block,
+		text:  "Original text",
+	}
+	model, _ := ep.Update(loadedMsg)
+	epPtr := model.(*EditPage)
+	ep = *epPtr
+
+	// Trigger refresh with Ctrl+R
+	msg := tea.KeyMsg{Type: tea.KeyCtrlR}
+	model, cmd := ep.Update(msg)
+	epPtr = model.(*EditPage)
+	ep = *epPtr
+
+	if cmd == nil {
+		t.Fatal("expected refresh command")
+	}
+
+	// Execute refresh command
+	refreshMsg := cmd()
+	if _, ok := refreshMsg.(blockRefreshedMsg); !ok {
+		t.Fatalf("expected blockRefreshedMsg, got %T", refreshMsg)
+	}
+}
+
+func TestEditPageUpdate_TransformBlockType(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	block := testhelpers.NewParagraphBlock("Test content")
+	mockClient.WithBlock(block)
+
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+
+	// Load block first
+	loadedMsg := blockLoadedMsg{
+		block: block,
+		text:  "Test content",
+	}
+	model, _ := ep.Update(loadedMsg)
+	epPtr := model.(*EditPage)
+	ep = *epPtr
+
+	// Trigger transform to heading1 with Ctrl+1
+	// Can't easily simulate Ctrl+1, so test transformBlockType directly
+	cmd := ep.transformBlockType(string(notionapi.BlockTypeHeading1))
+
+	if cmd == nil {
+		t.Fatal("expected save command for transformation")
+	}
+
+	if !ep.saving {
+		t.Error("expected saving to be true during transformation")
+	}
+
+	if ep.pendingBlockType != string(notionapi.BlockTypeHeading1) {
+		t.Errorf("expected pendingBlockType heading_1, got %s", ep.pendingBlockType)
+	}
+}
+
+func TestIsTransientError(t *testing.T) {
+	t.Parallel()
+
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: testhelpers.NewMockNotionClient(),
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+
+	tests := []struct {
+		name      string
+		err       error
+		transient bool
+	}{
+		{"nil error", nil, false},
+		{"timeout", fmt.Errorf("timeout"), true},
+		{"deadline exceeded", fmt.Errorf("deadline exceeded"), true},
+		{"429 rate limit", fmt.Errorf("429 too many requests"), true},
+		{"500 server error", fmt.Errorf("500 internal server error"), true},
+		{"401 auth error", fmt.Errorf("401 unauthorized"), false},
+		{"404 not found", fmt.Errorf("404 not found"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ep.isTransientError(tt.err)
+			if result != tt.transient {
+				t.Errorf("expected isTransientError(%v) = %v, got %v", tt.err, tt.transient, result)
+			}
+		})
+	}
+}
+
+func TestCalculateRetryDelay(t *testing.T) {
+	t.Parallel()
+
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: testhelpers.NewMockNotionClient(),
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+
+	tests := []struct {
+		attempt int
+		maxMS   int64
+	}{
+		{0, 1000},   // 1s
+		{1, 2000},   // 2s
+		{2, 4000},   // 4s
+		{3, 8000},   // 8s
+		{4, 10000},  // Capped at 10s
+		{10, 10000}, // Still capped at 10s
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("attempt_%d", tt.attempt), func(t *testing.T) {
+			delay := ep.calculateRetryDelay(tt.attempt)
+			if delay.Milliseconds() > tt.maxMS {
+				t.Errorf("expected delay <= %dms, got %dms", tt.maxMS, delay.Milliseconds())
+			}
+		})
+	}
+}

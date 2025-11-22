@@ -22,6 +22,10 @@ const (
 	PageDetail PageID = "detail"
 	// PageEdit represents the edit mode page.
 	PageEdit PageID = "edit"
+	// PageSearch represents the search page.
+	PageSearch PageID = "search"
+	// PageDatabaseList represents the database selection page.
+	PageDatabaseList PageID = "database-list"
 )
 
 const (
