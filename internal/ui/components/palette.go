@@ -97,8 +97,8 @@ func NewCommandPalette() CommandPalette {
 func (p *CommandPalette) addBuiltInCommands() {
 	builtInCommands := []commandItem{
 		{
-			name:        "Search All Pages",
-			description: "Search across all pages and content",
+			name:        "Search Workspace",
+			description: "Search all pages and databases in workspace",
 			actionType:  "search",
 			action:      func() tea.Cmd { return nil },
 		},

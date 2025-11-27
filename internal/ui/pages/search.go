@@ -11,15 +11,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
+)
+
+// SearchMode defines the search scope.
+type SearchMode string
+
+const (
+	// SearchModeDatabase searches within the current database only.
+	SearchModeDatabase SearchMode = "database"
+	// SearchModeWorkspace searches across the entire workspace.
+	SearchModeWorkspace SearchMode = "workspace"
 )
 
 // SearchResult represents a single search result.
 type SearchResult struct {
-	PageID    string
-	Title     string
-	Snippet   string
-	MatchType string // "title", "property", "content"
+	PageID     string
+	Title      string
+	Snippet    string
+	MatchType  string // "title", "property", "content"
+	ObjectType string // "page" or "database" (for workspace search)
 }
 
 // searchResultItem wraps SearchResult for use in bubbles/list.
@@ -34,11 +46,20 @@ func (s searchResultItem) Title() string {
 
 // Description returns the result's description for display.
 func (s searchResultItem) Description() string {
-	matchIcon := "📄"
-	if s.result.MatchType == "title" {
-		matchIcon = "🔍"
+	// Determine icon based on object type and match type
+	typeIcon := "📄"
+	if s.result.ObjectType == "database" {
+		typeIcon = "📊"
+	} else if s.result.MatchType == "title" {
+		typeIcon = "🔍"
 	}
-	return fmt.Sprintf("%s %s | %s", matchIcon, s.result.MatchType, s.result.Snippet)
+
+	// For workspace search, show object type
+	if s.result.ObjectType != "" {
+		return fmt.Sprintf("%s [%s] %s", typeIcon, strings.ToUpper(s.result.ObjectType[:1])+s.result.ObjectType[1:], s.result.Snippet)
+	}
+
+	return fmt.Sprintf("%s %s | %s", typeIcon, s.result.MatchType, s.result.Snippet)
 }
 
 // FilterValue returns the value used for fuzzy filtering.
@@ -48,9 +69,22 @@ func (s searchResultItem) FilterValue() string {
 
 // searchResultsMsg is sent when search results are fetched.
 type searchResultsMsg struct {
-	results []SearchResult
-	query   string
-	err     error
+	results    []SearchResult
+	query      string
+	err        error
+	hasMore    bool
+	nextCursor string
+}
+
+// SearchNavigationMsg is sent when a search result is selected for navigation.
+type SearchNavigationMsg struct {
+	ID         string
+	ObjectType string // "page" or "database"
+}
+
+// PageID returns the page/database ID for navigation.
+func (m SearchNavigationMsg) PageID() string {
+	return m.ID
 }
 
 // SearchPage is a page component for cross-page search.
@@ -69,6 +103,9 @@ type SearchPage struct {
 	cache        *cache.PageCache
 	databaseID   string
 	styles       SearchPageStyles
+	mode         SearchMode // database or workspace
+	hasMore      bool       // pagination: more results available
+	nextCursor   string     // pagination: cursor for next page
 }
 
 // SearchPageStyles holds the styles for the search page.
@@ -114,13 +151,24 @@ type NewSearchPageInput struct {
 	NotionClient NotionClient
 	Cache        *cache.PageCache
 	DatabaseID   string
+	Mode         SearchMode // Default: SearchModeWorkspace
 }
 
 // NewSearchPage creates a new SearchPage instance.
 func NewSearchPage(input NewSearchPageInput) SearchPage {
+	// Default to workspace mode
+	mode := input.Mode
+	if mode == "" {
+		mode = SearchModeWorkspace
+	}
+
 	// Create text input for search query
 	ti := textinput.New()
-	ti.Placeholder = "Search across all pages..."
+	if mode == SearchModeWorkspace {
+		ti.Placeholder = "Search workspace (pages & databases)..."
+	} else {
+		ti.Placeholder = "Search in current database..."
+	}
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = input.Width - 10
@@ -140,7 +188,9 @@ func NewSearchPage(input NewSearchPageInput) SearchPage {
 	statusBar.SetWidth(input.Width)
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText("Type to search | Enter: navigate to page | ESC: back")
+
+	helpText := "Type to search | Enter: select | Tab: toggle mode | ESC: back"
+	statusBar.SetHelpText(helpText)
 
 	spinner := components.NewSpinner("Searching...")
 
@@ -162,6 +212,9 @@ func NewSearchPage(input NewSearchPageInput) SearchPage {
 		cache:        input.Cache,
 		databaseID:   input.DatabaseID,
 		styles:       styles,
+		mode:         mode,
+		hasMore:      false,
+		nextCursor:   "",
 	}
 }
 
@@ -187,9 +240,18 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sp.err = nil
 		sp.results = msg.results
 		sp.query = msg.query
+		sp.hasMore = msg.hasMore
+		sp.nextCursor = msg.nextCursor
 		sp.updateResultsList()
 
-		helpText := fmt.Sprintf("%d results | Enter: navigate | ESC: back", len(sp.results))
+		modeLabel := "workspace"
+		if sp.mode == SearchModeDatabase {
+			modeLabel = "database"
+		}
+		helpText := fmt.Sprintf("%d results (%s) | Enter: select | Tab: toggle mode | ESC: back", len(sp.results), modeLabel)
+		if sp.hasMore {
+			helpText = fmt.Sprintf("%d+ results (%s) | Enter: select | Tab: toggle mode | ESC: back", len(sp.results), modeLabel)
+		}
 		sp.statusBar.SetHelpText(helpText)
 		sp.statusBar.SetSyncStatus(components.StatusSynced)
 		return sp, nil
@@ -205,22 +267,36 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return sp, sp.searchCmd()
 			}
 
-			// If results list has selection, navigate to that page
+			// If results list has selection, navigate to that page/database
 			if len(sp.results) > 0 && !sp.input.Focused() {
 				if item, ok := sp.resultsList.SelectedItem().(searchResultItem); ok {
 					return sp, func() tea.Msg {
-						return NewNavigationMsg(item.result.PageID)
+						return SearchNavigationMsg{
+							ID:         item.result.PageID,
+							ObjectType: item.result.ObjectType,
+						}
 					}
 				}
 			}
 
 		case "tab":
-			// Toggle focus between input and results
-			if sp.input.Focused() {
+			// Toggle between input focus and results, or toggle search mode
+			if sp.input.Focused() && len(sp.results) > 0 {
+				// If we have results, move focus to results list
 				sp.input.Blur()
-			} else {
+			} else if !sp.input.Focused() {
+				// If in results, toggle mode and refocus input
+				sp.toggleMode()
 				sp.input.Focus()
+			} else {
+				// Toggle search mode
+				sp.toggleMode()
 			}
+			return sp, nil
+
+		case "ctrl+t":
+			// Explicit mode toggle
+			sp.toggleMode()
 			return sp, nil
 
 		case "esc":
@@ -263,6 +339,30 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return sp, tea.Batch(cmds...)
 }
 
+// toggleMode switches between database and workspace search modes.
+func (sp *SearchPage) toggleMode() {
+	if sp.mode == SearchModeWorkspace {
+		sp.mode = SearchModeDatabase
+		sp.input.Placeholder = "Search in current database..."
+	} else {
+		sp.mode = SearchModeWorkspace
+		sp.input.Placeholder = "Search workspace (pages & databases)..."
+	}
+
+	// Clear results when switching modes
+	sp.results = []SearchResult{}
+	sp.query = ""
+	sp.hasMore = false
+	sp.nextCursor = ""
+	sp.updateResultsList()
+
+	modeLabel := "workspace"
+	if sp.mode == SearchModeDatabase {
+		modeLabel = "database"
+	}
+	sp.statusBar.SetHelpText(fmt.Sprintf("Mode: %s | Type to search | Tab: toggle mode | ESC: back", modeLabel))
+}
+
 // View renders the search page.
 func (sp *SearchPage) View() string {
 	if sp.searching {
@@ -278,7 +378,11 @@ func (sp *SearchPage) View() string {
 	}
 
 	// Build search input section
-	inputLabel := sp.styles.InputLabel.Render("Search Pages")
+	modeIndicator := "Workspace"
+	if sp.mode == SearchModeDatabase {
+		modeIndicator = "Database"
+	}
+	inputLabel := sp.styles.InputLabel.Render(fmt.Sprintf("Search (%s)", modeIndicator))
 	inputView := sp.input.View()
 	inputSection := lipgloss.JoinVertical(lipgloss.Left, inputLabel, inputView)
 
@@ -314,6 +418,8 @@ func (sp *SearchPage) View() string {
 // searchCmd returns a command that performs the search operation.
 func (sp *SearchPage) searchCmd() tea.Cmd {
 	query := sp.input.Value()
+	mode := sp.mode
+	databaseID := sp.databaseID
 
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -324,50 +430,106 @@ func (sp *SearchPage) searchCmd() tea.Cmd {
 			}
 		}
 
-		// Fetch all pages from database
-		resp, err := sp.notionClient.QueryDatabase(ctx, sp.databaseID, nil)
-		if err != nil {
-			return searchResultsMsg{
-				err: fmt.Errorf("fetch pages: %w", err),
-			}
+		// Use workspace search or database search based on mode
+		if mode == SearchModeWorkspace {
+			return sp.searchWorkspace(ctx, query)
 		}
 
-		// Search through results
-		results := make([]SearchResult, 0)
-		queryLower := strings.ToLower(query)
+		return sp.searchDatabase(ctx, query, databaseID)
+	}
+}
 
-		for _, p := range resp.Results {
-			title := extractTitle(&p)
-			titleLower := strings.ToLower(title)
-
-			// Match on title
-			if strings.Contains(titleLower, queryLower) {
-				snippet := sp.generateSnippet(title, query)
-				results = append(results, SearchResult{
-					PageID:    string(p.ID),
-					Title:     title,
-					Snippet:   snippet,
-					MatchType: "title",
-				})
-				continue
-			}
-
-			// Match on status property
-			status := extractStatus(&p)
-			if status != "" && strings.Contains(strings.ToLower(status), queryLower) {
-				results = append(results, SearchResult{
-					PageID:    string(p.ID),
-					Title:     title,
-					Snippet:   fmt.Sprintf("Status: %s", status),
-					MatchType: "property",
-				})
-			}
-		}
-
+// searchWorkspace performs a workspace-wide search using the Notion Search API.
+func (sp *SearchPage) searchWorkspace(ctx context.Context, query string) searchResultsMsg {
+	resp, err := sp.notionClient.Search(ctx, notion.SearchInput{
+		Query:    query,
+		PageSize: 20,
+	})
+	if err != nil {
 		return searchResultsMsg{
-			results: results,
-			query:   query,
+			err: fmt.Errorf("workspace search: %w", err),
 		}
+	}
+
+	results := make([]SearchResult, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		snippet := ""
+		if r.ParentType == "workspace" {
+			snippet = "Root level"
+		} else if r.ParentType == "database_id" {
+			snippet = "In database"
+		} else if r.ParentType == "page_id" {
+			snippet = "Child page"
+		}
+
+		results = append(results, SearchResult{
+			PageID:     r.ID,
+			Title:      r.Title,
+			Snippet:    snippet,
+			MatchType:  "title",
+			ObjectType: r.ObjectType,
+		})
+	}
+
+	return searchResultsMsg{
+		results:    results,
+		query:      query,
+		hasMore:    resp.HasMore,
+		nextCursor: resp.NextCursor,
+	}
+}
+
+// searchDatabase performs a search within the current database.
+func (sp *SearchPage) searchDatabase(ctx context.Context, query, databaseID string) searchResultsMsg {
+	if databaseID == "" {
+		return searchResultsMsg{
+			err: fmt.Errorf("no database configured - use workspace search mode"),
+		}
+	}
+
+	resp, err := sp.notionClient.QueryDatabase(ctx, databaseID, nil)
+	if err != nil {
+		return searchResultsMsg{
+			err: fmt.Errorf("fetch pages: %w", err),
+		}
+	}
+
+	results := make([]SearchResult, 0)
+	queryLower := strings.ToLower(query)
+
+	for _, p := range resp.Results {
+		title := extractTitle(&p)
+		titleLower := strings.ToLower(title)
+
+		// Match on title
+		if strings.Contains(titleLower, queryLower) {
+			snippet := sp.generateSnippet(title, query)
+			results = append(results, SearchResult{
+				PageID:     string(p.ID),
+				Title:      title,
+				Snippet:    snippet,
+				MatchType:  "title",
+				ObjectType: "page",
+			})
+			continue
+		}
+
+		// Match on status property
+		status := extractStatus(&p)
+		if status != "" && strings.Contains(strings.ToLower(status), queryLower) {
+			results = append(results, SearchResult{
+				PageID:     string(p.ID),
+				Title:      title,
+				Snippet:    fmt.Sprintf("Status: %s", status),
+				MatchType:  "property",
+				ObjectType: "page",
+			})
+		}
+	}
+
+	return searchResultsMsg{
+		results: results,
+		query:   query,
 	}
 }
 
@@ -434,4 +596,19 @@ func (sp *SearchPage) Query() string {
 // IsSearching returns whether a search is in progress.
 func (sp *SearchPage) IsSearching() bool {
 	return sp.searching
+}
+
+// Mode returns the current search mode.
+func (sp *SearchPage) Mode() SearchMode {
+	return sp.mode
+}
+
+// SetMode sets the search mode.
+func (sp *SearchPage) SetMode(mode SearchMode) {
+	sp.mode = mode
+	if mode == SearchModeWorkspace {
+		sp.input.Placeholder = "Search workspace (pages & databases)..."
+	} else {
+		sp.input.Placeholder = "Search in current database..."
+	}
 }

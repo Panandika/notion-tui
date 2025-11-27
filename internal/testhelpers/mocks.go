@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/jomei/notionapi"
 )
 
@@ -22,6 +24,7 @@ type MockNotionClient struct {
 	UpdateBlockFunc   func(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error)
 	AppendBlocksFunc  func(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
 	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
+	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 
 	// Call tracking for assertions
 	GetPageCalls       []GetPageCall
@@ -32,6 +35,7 @@ type MockNotionClient struct {
 	UpdateBlockCalls   []UpdateBlockCall
 	AppendBlocksCalls  []AppendBlocksCall
 	DeleteBlockCalls   []DeleteBlockCall
+	SearchCalls        []SearchCall
 
 	// Simple return values for common scenarios
 	PageToReturn         *notionapi.Page
@@ -40,6 +44,7 @@ type MockNotionClient struct {
 	BlockToReturn        notionapi.Block
 	AppendResponseReturn *notionapi.AppendBlockChildrenResponse
 	DeletedBlockReturn   notionapi.Block
+	SearchResponseReturn *notion.SearchResponse
 	ErrorToReturn        error
 }
 
@@ -96,6 +101,12 @@ type DeleteBlockCall struct {
 	ID  string
 }
 
+// SearchCall records a call to Search.
+type SearchCall struct {
+	Ctx   context.Context
+	Input notion.SearchInput
+}
+
 // NewMockNotionClient creates a new MockNotionClient with default no-op behavior.
 func NewMockNotionClient() *MockNotionClient {
 	return &MockNotionClient{
@@ -107,6 +118,7 @@ func NewMockNotionClient() *MockNotionClient {
 		UpdateBlockCalls:   make([]UpdateBlockCall, 0),
 		AppendBlocksCalls:  make([]AppendBlocksCall, 0),
 		DeleteBlockCalls:   make([]DeleteBlockCall, 0),
+		SearchCalls:        make([]SearchCall, 0),
 	}
 }
 
@@ -313,13 +325,44 @@ func (m *MockNotionClient) DeleteBlock(ctx context.Context, id string) (notionap
 	return NewParagraphBlock("Deleted block"), nil
 }
 
+// Search performs a workspace-wide search.
+func (m *MockNotionClient) Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error) {
+	m.mu.Lock()
+	m.SearchCalls = append(m.SearchCalls, SearchCall{
+		Ctx:   ctx,
+		Input: input,
+	})
+	m.mu.Unlock()
+
+	if m.SearchFunc != nil {
+		return m.SearchFunc(ctx, input)
+	}
+
+	if m.ErrorToReturn != nil {
+		return nil, m.ErrorToReturn
+	}
+
+	if m.SearchResponseReturn != nil {
+		return m.SearchResponseReturn, nil
+	}
+
+	// Default mock response
+	return &notion.SearchResponse{
+		Results: []notion.SearchResult{
+			{ID: "page-1", Title: "Test Page", ObjectType: "page", LastEdited: time.Now()},
+			{ID: "db-1", Title: "Test Database", ObjectType: "database", LastEdited: time.Now()},
+		},
+		HasMore: false,
+	}, nil
+}
+
 // CallCount returns the total number of calls made to all methods.
 func (m *MockNotionClient) CallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.GetPageCalls) + len(m.QueryDatabaseCalls) + len(m.GetBlocksCalls) +
 		len(m.GetBlockCalls) + len(m.UpdatePageCalls) + len(m.UpdateBlockCalls) +
-		len(m.AppendBlocksCalls) + len(m.DeleteBlockCalls)
+		len(m.AppendBlocksCalls) + len(m.DeleteBlockCalls) + len(m.SearchCalls)
 }
 
 // GetPageCallCount returns the number of calls to GetPage.
@@ -376,6 +419,13 @@ func (m *MockNotionClient) DeleteBlockCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.DeleteBlockCalls)
+}
+
+// SearchCallCount returns the number of calls to Search.
+func (m *MockNotionClient) SearchCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.SearchCalls)
 }
 
 // LastGetPageCall returns the most recent GetPage call, or nil if none.
@@ -458,6 +508,16 @@ func (m *MockNotionClient) LastDeleteBlockCall() *DeleteBlockCall {
 	return &m.DeleteBlockCalls[len(m.DeleteBlockCalls)-1]
 }
 
+// LastSearchCall returns the most recent Search call, or nil if none.
+func (m *MockNotionClient) LastSearchCall() *SearchCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.SearchCalls) == 0 {
+		return nil
+	}
+	return &m.SearchCalls[len(m.SearchCalls)-1]
+}
+
 // Reset clears all recorded calls and resets return values.
 func (m *MockNotionClient) Reset() {
 	m.mu.Lock()
@@ -471,6 +531,7 @@ func (m *MockNotionClient) Reset() {
 	m.UpdateBlockCalls = make([]UpdateBlockCall, 0)
 	m.AppendBlocksCalls = make([]AppendBlocksCall, 0)
 	m.DeleteBlockCalls = make([]DeleteBlockCall, 0)
+	m.SearchCalls = make([]SearchCall, 0)
 
 	m.GetPageFunc = nil
 	m.QueryDatabaseFunc = nil
@@ -480,6 +541,7 @@ func (m *MockNotionClient) Reset() {
 	m.UpdateBlockFunc = nil
 	m.AppendBlocksFunc = nil
 	m.DeleteBlockFunc = nil
+	m.SearchFunc = nil
 
 	m.PageToReturn = nil
 	m.DatabaseToReturn = nil
@@ -487,6 +549,7 @@ func (m *MockNotionClient) Reset() {
 	m.BlockToReturn = nil
 	m.AppendResponseReturn = nil
 	m.DeletedBlockReturn = nil
+	m.SearchResponseReturn = nil
 	m.ErrorToReturn = nil
 }
 

@@ -91,6 +91,7 @@ func TestSearchPageUpdate_EnterToSearch(t *testing.T) {
 		NotionClient: client,
 		Cache:        nil,
 		DatabaseID:   "test-db",
+		Mode:         SearchModeDatabase, // Explicitly use database mode for this test
 	})
 
 	// Set input value
@@ -208,9 +209,9 @@ func TestSearchPageUpdate_NavigateToResult(t *testing.T) {
 
 	// Execute the navigation command
 	navMsg := cmd()
-	assert.IsType(t, NavigationMsg{}, navMsg)
+	assert.IsType(t, SearchNavigationMsg{}, navMsg)
 
-	navigationMsg := navMsg.(NavigationMsg)
+	navigationMsg := navMsg.(SearchNavigationMsg)
 	assert.Equal(t, "page-1", navigationMsg.PageID())
 }
 
@@ -227,6 +228,12 @@ func TestSearchPageUpdate_TabToggleFocus(t *testing.T) {
 	// Initially input is focused
 	assert.True(t, page.input.Focused())
 
+	// Add results so Tab can blur input (Tab only blurs when results exist)
+	page.results = []SearchResult{
+		{PageID: "page-1", Title: "Test", MatchType: "title"},
+	}
+	page.updateResultsList()
+
 	// Press tab to blur input
 	msg := tea.KeyMsg{Type: tea.KeyTab}
 	updatedModel, _ := page.Update(msg)
@@ -234,7 +241,7 @@ func TestSearchPageUpdate_TabToggleFocus(t *testing.T) {
 
 	assert.False(t, updatedPage.input.Focused())
 
-	// Press tab again to focus input
+	// Press tab again to toggle mode and refocus input
 	updatedModel, _ = updatedPage.Update(msg)
 	updatedPage = updatedModel.(*SearchPage)
 
@@ -274,6 +281,7 @@ func TestSearchPage_SearchCmd_APIError(t *testing.T) {
 		NotionClient: client,
 		Cache:        nil,
 		DatabaseID:   "test-db",
+		Mode:         SearchModeDatabase, // Use database mode for this test
 	})
 
 	page.input.SetValue("test")
@@ -326,6 +334,7 @@ func TestSearchPage_SearchCmd_MatchTitle(t *testing.T) {
 		NotionClient: client,
 		Cache:        nil,
 		DatabaseID:   "test-db",
+		Mode:         SearchModeDatabase, // Use database mode for this test
 	})
 
 	page.input.SetValue("testing")
@@ -375,6 +384,7 @@ func TestSearchPage_SearchCmd_MatchStatus(t *testing.T) {
 		NotionClient: client,
 		Cache:        nil,
 		DatabaseID:   "test-db",
+		Mode:         SearchModeDatabase, // Use database mode for this test
 	})
 
 	page.input.SetValue("progress")
@@ -419,6 +429,7 @@ func TestSearchPage_SearchCmd_NoResults(t *testing.T) {
 		NotionClient: client,
 		Cache:        nil,
 		DatabaseID:   "test-db",
+		Mode:         SearchModeDatabase, // Use database mode for this test
 	})
 
 	page.input.SetValue("nonexistent")
@@ -516,7 +527,7 @@ func TestSearchPage_View(t *testing.T) {
 	// Test initial state
 	view := page.View()
 	assert.NotEmpty(t, view)
-	assert.Contains(t, view, "Search Pages")
+	assert.Contains(t, view, "Search (Workspace)")
 
 	// Test with results
 	page.results = []SearchResult{

@@ -51,6 +51,7 @@ func TestIntegration_NavigationFlow(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -111,6 +112,7 @@ func TestIntegration_NavigationWithMessages(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -192,6 +194,7 @@ func TestIntegration_GlobalKeybindings(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -284,6 +287,7 @@ func TestIntegration_WindowResize(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -403,6 +407,7 @@ func TestIntegration_ComponentInteraction(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -450,6 +455,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -515,6 +521,7 @@ func TestIntegration_PageLifecycle(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -559,6 +566,7 @@ func TestIntegration_ComplexUserWorkflow(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
+		Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 		CacheDir:    "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -695,6 +703,7 @@ func TestIntegration_ViewRendering(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -778,6 +787,7 @@ func TestIntegration_MessagePropagation(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -803,6 +813,7 @@ func TestIntegration_StateConsistency(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
+		Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 		CacheDir:    "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{Config: cfg, Cache: nil})
@@ -883,6 +894,7 @@ func TestIntegration_SequentialNavigations(t *testing.T) {
 			cfg := &config.Config{
 				NotionToken: "test_token",
 				DatabaseID:  "test_db_id",
+				Databases:   []config.DatabaseConfig{{ID: "test_db_id", Name: "Test DB"}},
 				CacheDir:    "/tmp/test-cache",
 			}
 			model := NewModel(NewModelInput{Config: cfg, Cache: nil})

@@ -70,9 +70,18 @@ func NewModel(input NewModelInput) AppModel {
 		}
 	}
 
+	// Determine initial page based on config
+	// If no databases configured, start with workspace search
+	initialPage := PageList
+	showSidebar := true
+	if !input.Config.HasDatabases() {
+		initialPage = PageWorkspaceSearch
+		showSidebar = false
+	}
+
 	// Initialize navigator
 	nav := NewNavigator(NewNavigatorInput{
-		InitialPage: PageList,
+		InitialPage: initialPage,
 		MaxHistory:  DefaultMaxHistory,
 	})
 
@@ -92,7 +101,7 @@ func NewModel(input NewModelInput) AppModel {
 	cmdPalette := components.NewCommandPalette()
 
 	return AppModel{
-		currentPage:  PageList,
+		currentPage:  initialPage,
 		pages:        make(map[PageID]tea.Model),
 		navigator:    &nav,
 		sidebar:      sidebar,
@@ -100,7 +109,7 @@ func NewModel(input NewModelInput) AppModel {
 		cmdPalette:   cmdPalette,
 		width:        0,
 		height:       0,
-		showSidebar:  true,
+		showSidebar:  showSidebar,
 		showPalette:  false,
 		mode:         ViewModeBrowse,
 		notionClient: notionClient,
@@ -134,15 +143,30 @@ func (m AppModel) Init() tea.Cmd {
 
 // initializePages creates and registers all page instances.
 func (m *AppModel) initializePages() {
-	// Create ListPage
-	listPage := pages.NewListPage(pages.NewListPageInput{
-		Width:        m.width,
-		Height:       m.height,
-		NotionClient: m.notionClient,
-		Cache:        m.cache,
-		DatabaseID:   m.config.GetDatabaseID(),
-	})
-	m.pages[PageList] = &listPage
+	// If databases are configured, create ListPage
+	if m.config.HasDatabases() {
+		listPage := pages.NewListPage(pages.NewListPageInput{
+			Width:        m.width,
+			Height:       m.height,
+			NotionClient: m.notionClient,
+			Cache:        m.cache,
+			DatabaseID:   m.config.GetDatabaseID(),
+		})
+		m.pages[PageList] = &listPage
+	}
+
+	// If no databases, create workspace search page as initial view
+	if !m.config.HasDatabases() {
+		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
+			Width:        m.width,
+			Height:       m.height,
+			NotionClient: m.notionClient,
+			Cache:        m.cache,
+			DatabaseID:   "",
+			Mode:         pages.SearchModeWorkspace,
+		})
+		m.pages[PageWorkspaceSearch] = &searchPage
+	}
 
 	// DetailPage and EditPage will be created on-demand when navigating
 	// This avoids creating pages with invalid state before we have page IDs
@@ -251,6 +275,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentDBID = msg.DatabaseID
 		// Refresh list page with new database
 		return m, m.switchDatabase(msg.DatabaseID)
+
+	case pages.SearchNavigationMsg:
+		// User selected a search result (page or database)
+		if msg.ObjectType == "database" {
+			// Switch to this database and show its pages
+			return m, m.switchDatabase(msg.ID)
+		}
+		// Navigate to page detail
+		return m, m.navigateToDetail(msg.ID)
 	}
 
 	// Delegate to current page
@@ -439,6 +472,18 @@ func (m *AppModel) createPage(pageID PageID) {
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.currentDBID,
+			Mode:         pages.SearchModeDatabase,
+		})
+		m.pages[pageID] = &searchPage
+
+	case PageWorkspaceSearch:
+		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
+			Width:        m.width,
+			Height:       m.height,
+			NotionClient: m.notionClient,
+			Cache:        m.cache,
+			DatabaseID:   m.currentDBID,
+			Mode:         pages.SearchModeWorkspace,
 		})
 		m.pages[pageID] = &searchPage
 
@@ -506,20 +551,21 @@ func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea
 	}
 }
 
-// navigateToSearch navigates to the search page.
+// navigateToSearch navigates to the workspace search page.
 func (m *AppModel) navigateToSearch() tea.Cmd {
-	// Create or update search page
+	// Create or update search page with workspace mode
 	searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
 		Width:        m.width,
 		Height:       m.height,
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		DatabaseID:   m.currentDBID,
+		Mode:         pages.SearchModeWorkspace,
 	})
-	m.pages[PageSearch] = &searchPage
+	m.pages[PageWorkspaceSearch] = &searchPage
 
-	// Navigate to search page
-	return m.navigateTo(PageSearch)
+	// Navigate to workspace search page
+	return m.navigateTo(PageWorkspaceSearch)
 }
 
 // navigateToDatabaseList navigates to the database list page.

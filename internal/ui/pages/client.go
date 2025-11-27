@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/jomei/notionapi"
 )
 
@@ -22,4 +23,7 @@ type NotionClient interface {
 
 	// Database operations
 	QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error)
+
+	// Search operations
+	Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 }

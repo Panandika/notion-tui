@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 )
 
@@ -24,6 +25,7 @@ type MockNotionClient struct {
 	UpdateBlockFunc   func(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error)
 	AppendBlocksFunc  func(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
 	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
+	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 }
 
 func (m *MockNotionClient) QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
@@ -80,6 +82,13 @@ func (m *MockNotionClient) DeleteBlock(ctx context.Context, id string) (notionap
 		return m.DeleteBlockFunc(ctx, id)
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error) {
+	if m.SearchFunc != nil {
+		return m.SearchFunc(ctx, input)
+	}
+	return &notion.SearchResponse{}, nil
 }
 
 // newTestPage creates a test page for testing.

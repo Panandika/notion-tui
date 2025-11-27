@@ -3,9 +3,29 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// isValidNotionID checks if the string is a valid Notion ID format.
+// Notion IDs are 32 hex characters, optionally with hyphens.
+func isValidNotionID(id string) bool {
+	if id == "" {
+		return false
+	}
+	// Remove hyphens and check for 32 hex chars
+	cleaned := strings.ReplaceAll(id, "-", "")
+	if len(cleaned) != 32 {
+		return false
+	}
+	for _, c := range cleaned {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
 
 // DatabaseConfig represents a single database configuration.
 type DatabaseConfig struct {
@@ -59,8 +79,10 @@ func (c *Config) migrateLegacyConfig() error {
 		return nil
 	}
 
-	// If old format is set, migrate it
-	if c.DatabaseID != "" {
+	// Only migrate if database_id is a valid Notion UUID
+	// Invalid IDs (placeholders, malformed values) are silently skipped,
+	// allowing the app to fall back to workspace search mode.
+	if c.DatabaseID != "" && isValidNotionID(c.DatabaseID) {
 		c.Databases = []DatabaseConfig{
 			{
 				ID:   c.DatabaseID,
@@ -81,12 +103,9 @@ func (c *Config) Validate() error {
 		return errors.New("notion_token is required (set via --token flag, NOTION_TUI_NOTION_TOKEN env var, or config file)")
 	}
 
-	// Ensure at least one database is configured
-	if len(c.Databases) == 0 {
-		if c.DatabaseID == "" {
-			return errors.New("at least one database is required (set via --database-id flag, NOTION_TUI_DATABASE_ID env var, databases array in config file)")
-		}
-		// Migration should have happened, but double-check
+	// Database is now optional - users can use workspace search to discover content
+	// If legacy DatabaseID is set but Databases is empty, migrate it (only if valid UUID)
+	if len(c.Databases) == 0 && c.DatabaseID != "" && isValidNotionID(c.DatabaseID) {
 		c.Databases = []DatabaseConfig{
 			{
 				ID:   c.DatabaseID,
@@ -97,7 +116,7 @@ func (c *Config) Validate() error {
 		c.DefaultDatabase = c.DatabaseID
 	}
 
-	// Validate each database config
+	// Validate each database config (if any)
 	for i, db := range c.Databases {
 		if db.ID == "" {
 			return fmt.Errorf("database[%d] is missing required field 'id'", i)
@@ -107,21 +126,23 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Ensure default database is set and valid
-	if c.DefaultDatabase == "" {
-		c.DefaultDatabase = c.Databases[0].ID
-	}
-
-	// Verify default database exists in the list
-	found := false
-	for _, db := range c.Databases {
-		if db.ID == c.DefaultDatabase {
-			found = true
-			break
+	// Set default database if databases exist
+	if len(c.Databases) > 0 {
+		if c.DefaultDatabase == "" {
+			c.DefaultDatabase = c.Databases[0].ID
 		}
-	}
-	if !found {
-		return fmt.Errorf("default_database '%s' not found in databases list", c.DefaultDatabase)
+
+		// Verify default database exists in the list
+		found := false
+		for _, db := range c.Databases {
+			if db.ID == c.DefaultDatabase {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("default_database '%s' not found in databases list", c.DefaultDatabase)
+		}
 	}
 
 	return nil
@@ -163,4 +184,9 @@ func (c *Config) GetDatabaseID() string {
 		return c.Databases[0].ID
 	}
 	return c.DatabaseID
+}
+
+// HasDatabases returns true if any databases are configured.
+func (c *Config) HasDatabases() bool {
+	return len(c.Databases) > 0
 }

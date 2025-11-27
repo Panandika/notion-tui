@@ -163,8 +163,8 @@ func TestFuzzySearch(t *testing.T) {
 	}{
 		{
 			name:         "filter by command name",
-			commandNames: []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
-			wantFilters:  []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			commandNames: []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			wantFilters:  []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
 		},
 	}
 
@@ -201,7 +201,7 @@ func TestEnterExecute(t *testing.T) {
 		{
 			name:            "execute first command",
 			setupKeys:       []string{},
-			wantCommandName: "Search All Pages", // First command in new order
+			wantCommandName: "Search Workspace", // First command in new order
 			wantOpen:        false,
 		},
 		{
@@ -304,7 +304,7 @@ func TestBuiltInCommands(t *testing.T) {
 	}{
 		{
 			name:            "default built-in commands",
-			wantNames:       []string{"Search All Pages", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			wantNames:       []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
 			wantDescPartial: []string{"Search", "Switch", "Refresh", "Create", "Export", "Exit"},
 		},
 	}

@@ -14,8 +14,12 @@ func TestNewModel(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		Debug:       false,
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		DefaultDatabase: "test_db_id",
+		Debug:           false,
+		CacheDir:        "/tmp/test-cache",
 	}
 
 	model := NewModel(NewModelInput{
@@ -35,11 +39,32 @@ func TestNewModel(t *testing.T) {
 	assert.Equal(t, ViewModeBrowse, model.mode)
 }
 
+func TestNewModel_NoDatabases(t *testing.T) {
+	// Test model creation without databases - should start with workspace search
+	cfg := &config.Config{
+		NotionToken: "test_token",
+		Debug:       false,
+		CacheDir:    "/tmp/test-cache",
+	}
+
+	model := NewModel(NewModelInput{
+		Config: cfg,
+		Cache:  nil,
+	})
+
+	assert.Equal(t, PageWorkspaceSearch, model.currentPage)
+	assert.False(t, model.showSidebar)
+	assert.NotNil(t, model.notionClient)
+}
+
 func TestModelUpdate_WindowSize(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -60,7 +85,10 @@ func TestModelUpdate_GlobalKeys(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -84,7 +112,10 @@ func TestModelUpdate_ToggleSidebar(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -111,7 +142,10 @@ func TestModelUpdate_TogglePalette(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -138,7 +172,10 @@ func TestModelView(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -162,7 +199,10 @@ func TestModelInit(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -178,7 +218,10 @@ func TestModelPageRegistry(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -199,7 +242,10 @@ func TestModelNavigation(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -228,7 +274,10 @@ func TestModelNavigator(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -244,7 +293,10 @@ func TestModelCurrentPage(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -258,7 +310,10 @@ func TestModelFindPageByID(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -286,7 +341,10 @@ func TestModelSetPageList(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -307,7 +365,10 @@ func TestModelNavigationMsg(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
@@ -331,7 +392,10 @@ func TestModelBackNavigation(t *testing.T) {
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		DatabaseID:  "test_db_id",
-		CacheDir:    "/tmp/test-cache",
+		Databases: []config.DatabaseConfig{
+			{ID: "test_db_id", Name: "Test DB"},
+		},
+		CacheDir: "/tmp/test-cache",
 	}
 	model := NewModel(NewModelInput{
 		Config: cfg,
