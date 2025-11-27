@@ -192,7 +192,7 @@ func NewSearchPage(input NewSearchPageInput) SearchPage {
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
 
-	helpText := "Type to search | Enter: search | Ctrl+T: switch mode | ESC: back"
+	helpText := "Type to search | ↓: results | Ctrl+T: switch mode | ESC: back"
 	statusBar.SetHelpText(helpText)
 
 	spinner := components.NewSpinner("Searching...")
@@ -256,9 +256,9 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sp.mode == SearchModeDatabase {
 			modeLabel = "database"
 		}
-		helpText := fmt.Sprintf("%d results (%s) | Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
+		helpText := fmt.Sprintf("%d results (%s) | ↑: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
 		if sp.hasMore {
-			helpText = fmt.Sprintf("%d+ results (%s) | Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
+			helpText = fmt.Sprintf("%d+ results (%s) | ↑: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
 		}
 		sp.statusBar.SetHelpText(helpText)
 		sp.statusBar.SetSyncStatus(components.StatusSynced)
@@ -287,17 +287,21 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "tab":
-			// Toggle focus between input and results list
+		case "down", "j":
+			// Move from input to results list when pressing down
 			if sp.input.Focused() && len(sp.results) > 0 {
 				sp.input.Blur()
-				sp.statusBar.SetHelpText("Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back")
-			} else if !sp.input.Focused() {
-				sp.input.Focus()
-				sp.statusBar.SetHelpText("Type to search | Tab: results | Ctrl+T: switch mode | ESC: back")
+				sp.statusBar.SetHelpText("↑: input | Enter: select | Ctrl+T: switch mode | ESC: back")
+				return sp, nil
 			}
-			// If no results, Tab does nothing (stay in input)
-			return sp, nil
+
+		case "up", "k":
+			// Move from results list back to input when at top
+			if !sp.input.Focused() && sp.resultsList.Index() == 0 {
+				sp.input.Focus()
+				sp.statusBar.SetHelpText("Type to search | ↓: results | Ctrl+T: switch mode | ESC: back")
+				return sp, nil
+			}
 
 		case "ctrl+t":
 			// Explicit mode toggle
@@ -313,7 +317,7 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If in results list (input not focused), go back to input
 			if !sp.input.Focused() {
 				sp.input.Focus()
-				sp.statusBar.SetHelpText("Type to search | Tab: results | Ctrl+T: switch mode | ESC: back")
+				sp.statusBar.SetHelpText("Type to search | ↓: results | Ctrl+T: switch mode | ESC: back")
 				return sp, nil
 			}
 			// If input is focused, request back navigation

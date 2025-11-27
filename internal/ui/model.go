@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,12 @@ import (
 	"github.com/Panandika/notion-tui/internal/ui/pages"
 )
 
+// workspaceTreeMsg is sent when workspace tree data is fetched.
+type workspaceTreeMsg struct {
+	tree *components.NavTree
+	err  error
+}
+
 // AppModel represents the root TUI orchestrator that manages pages and global components.
 // It implements the Elm architecture pattern with page routing and navigation.
 type AppModel struct {
@@ -21,16 +28,17 @@ type AppModel struct {
 	navigator   *Navigator
 
 	// Components (always visible)
-	sidebar    components.Sidebar
+	treeView   components.TreeView
 	statusBar  components.StatusBar
 	cmdPalette components.CommandPalette
 
 	// State
-	width       int
-	height      int
-	showSidebar bool
-	showPalette bool
-	mode        ViewMode
+	width        int
+	height       int
+	showSidebar  bool
+	sidebarFocus bool // Whether sidebar has keyboard focus
+	showPalette  bool
+	mode         ViewMode
 
 	// Services
 	notionClient *notion.Client
@@ -76,10 +84,8 @@ func NewModel(input NewModelInput) AppModel {
 	// Determine initial page based on config
 	// If no databases configured, start with workspace search
 	initialPage := PageList
-	showSidebar := true
 	if !input.Config.HasDatabases() {
 		initialPage = PageWorkspaceSearch
-		showSidebar = false
 	}
 
 	// Initialize navigator
@@ -88,12 +94,11 @@ func NewModel(input NewModelInput) AppModel {
 		MaxHistory:  DefaultMaxHistory,
 	})
 
-	// Initialize global components
-	sidebar := components.NewSidebar(components.NewSidebarInput{
-		Items:  []components.Item{},
-		Width:  20, // Will be adjusted on first WindowSizeMsg
+	// Initialize tree view for navigation sidebar
+	treeView := components.NewTreeView(components.NewTreeViewInput{
+		Title:  "Workspace",
+		Width:  25, // Will be adjusted on first WindowSizeMsg
 		Height: 20,
-		Title:  "Pages",
 	})
 
 	statusBar := components.NewStatusBar()
@@ -107,12 +112,13 @@ func NewModel(input NewModelInput) AppModel {
 		currentPage:  initialPage,
 		pages:        make(map[PageID]tea.Model),
 		navigator:    &nav,
-		sidebar:      sidebar,
+		treeView:     treeView,
 		statusBar:    statusBar,
 		cmdPalette:   cmdPalette,
 		width:        0,
 		height:       0,
-		showSidebar:  showSidebar,
+		showSidebar:  true, // Always show sidebar by default
+		sidebarFocus: false,
 		showPalette:  false,
 		mode:         ViewModeBrowse,
 		notionClient: notionClient,
@@ -141,7 +147,30 @@ func (m AppModel) Init() tea.Cmd {
 	return tea.Batch(
 		pageInitCmd,
 		m.cmdPalette.Init(),
+		m.fetchWorkspaceTreeCmd(), // Fetch workspace tree on startup
 	)
+}
+
+// fetchWorkspaceTreeCmd returns a command that fetches the workspace tree.
+func (m *AppModel) fetchWorkspaceTreeCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Fetch all workspace items
+		resp, err := m.notionClient.Search(ctx, notion.SearchInput{
+			PageSize: 100,
+		})
+		if err != nil {
+			return workspaceTreeMsg{err: fmt.Errorf("fetch workspace: %w", err)}
+		}
+
+		// Build tree from results
+		tree := components.BuildNavTree(components.BuildNavTreeInput{
+			Results: resp.Results,
+		})
+
+		return workspaceTreeMsg{tree: tree}
+	}
 }
 
 // initializePages creates and registers all page instances.
@@ -195,7 +224,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sidebarWidth = 40
 		}
 
-		m.sidebar.SetSize(sidebarWidth, m.height-1)
+		m.treeView.SetSize(sidebarWidth, m.height-1)
 		m.statusBar.SetWidth(m.width)
 
 		// Update all pages with window size
@@ -209,6 +238,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(cmds...)
 
+	case workspaceTreeMsg:
+		// Workspace tree data received
+		if msg.err != nil {
+			m.treeView.SetError(msg.err)
+		} else {
+			m.treeView.SetTree(msg.tree)
+		}
+		return m, nil
+
+	case components.TreeNavigationMsg:
+		// User selected an item from the tree
+		if msg.ObjectType == "database" {
+			// Switch to this database
+			return m, m.switchDatabase(msg.ID)
+		}
+		// Navigate to page detail
+		return m, m.navigateToDetail(msg.ID)
+
 	case tea.KeyMsg:
 		// Check if we're on the search page - it needs special key handling
 		isSearchPage := m.currentPage == PageWorkspaceSearch
@@ -216,11 +263,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle mode-specific keys FIRST before global keys
 		switch msg.String() {
 		case "tab":
-			// On search page, let it handle Tab for focus switching between input and results
-			if isSearchPage {
-				break // Fall through to page delegation
-			}
-			// Otherwise toggle sidebar
+			// Toggle focus between sidebar and main content
+			m.sidebarFocus = !m.sidebarFocus
+			m.treeView.SetFocused(m.sidebarFocus)
+			return m, nil
+
+		case "ctrl+b":
+			// Toggle sidebar visibility
 			m.showSidebar = !m.showSidebar
 			return m, nil
 
@@ -272,14 +321,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle navigation to a new page
 		return m, m.navigateTo(PageID(msg.PageID()))
 
-	case components.ItemSelectedMsg:
-		// User selected a page from sidebar
-		pageID := msg.ID
-		m.selectedPage = m.findPageByID(PageID(pageID))
-
-		// Navigate to detail page
-		return m, m.navigateToDetail(pageID)
-
 	case components.CommandExecutedMsg:
 		// Command palette executed a command
 		m.showPalette = false
@@ -320,10 +361,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update sidebar if visible
-	if m.showSidebar && m.currentPage == PageList {
+	// Update tree view if sidebar is visible and focused
+	if m.showSidebar && m.sidebarFocus {
 		var cmd tea.Cmd
-		m.sidebar, cmd = m.sidebar.Update(msg)
+		m.treeView, cmd = m.treeView.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -362,10 +403,10 @@ func (m AppModel) View() string {
 		pageView = fmt.Sprintf("Page '%s' not found", m.currentPage)
 	}
 
-	// For list page, compose with sidebar
+	// Compose with sidebar if visible (on all pages)
 	var mainContent string
-	if m.currentPage == PageList && m.showSidebar {
-		sidebarView := m.sidebar.View()
+	if m.showSidebar {
+		sidebarView := m.treeView.View()
 		mainContent = LayoutSidebarMain(LayoutSidebarMainInput{
 			Sidebar:      sidebarView,
 			Main:         pageView,
@@ -409,9 +450,9 @@ func (m *AppModel) handleGlobalKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		// Toggle help display
 		m.showHelp = !m.showHelp
 		if m.showHelp {
-			m.statusBar.SetHelpText("↑/k ↓/j:nav | Enter:select | Esc:back | Tab:sidebar | Ctrl+P:cmd | r:refresh | q:quit | ?:close help")
+			m.statusBar.SetHelpText("Tab:focus tree | Ctrl+B:toggle tree | ←/→:expand | Enter:open | Ctrl+P:cmd | q:quit | ?:close")
 		} else {
-			m.statusBar.SetHelpText("? for help")
+			m.statusBar.SetHelpText("? for help | Tab: focus tree")
 		}
 		return true, nil
 	default:

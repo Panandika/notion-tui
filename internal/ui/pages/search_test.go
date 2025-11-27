@@ -215,7 +215,7 @@ func TestSearchPageUpdate_NavigateToResult(t *testing.T) {
 	assert.Equal(t, "page-1", navigationMsg.PageID())
 }
 
-func TestSearchPageUpdate_TabToggleFocus(t *testing.T) {
+func TestSearchPageUpdate_ArrowKeysFocus(t *testing.T) {
 	client := &MockNotionClient{}
 	page := NewSearchPage(NewSearchPageInput{
 		Width:        80,
@@ -228,21 +228,22 @@ func TestSearchPageUpdate_TabToggleFocus(t *testing.T) {
 	// Initially input is focused
 	assert.True(t, page.input.Focused())
 
-	// Add results so Tab can blur input (Tab only blurs when results exist)
+	// Add results so down arrow can blur input
 	page.results = []SearchResult{
 		{PageID: "page-1", Title: "Test", MatchType: "title"},
 	}
 	page.updateResultsList()
 
-	// Press tab to blur input
-	msg := tea.KeyMsg{Type: tea.KeyTab}
-	updatedModel, _ := page.Update(msg)
+	// Press down arrow to move to results
+	downMsg := tea.KeyMsg{Type: tea.KeyDown}
+	updatedModel, _ := page.Update(downMsg)
 	updatedPage := updatedModel.(*SearchPage)
 
 	assert.False(t, updatedPage.input.Focused())
 
-	// Press tab again to toggle mode and refocus input
-	updatedModel, _ = updatedPage.Update(msg)
+	// Press up arrow when at top of list to refocus input
+	upMsg := tea.KeyMsg{Type: tea.KeyUp}
+	updatedModel, _ = updatedPage.Update(upMsg)
 	updatedPage = updatedModel.(*SearchPage)
 
 	assert.True(t, updatedPage.input.Focused())

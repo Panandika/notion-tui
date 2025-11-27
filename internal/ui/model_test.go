@@ -53,7 +53,7 @@ func TestNewModel_NoDatabases(t *testing.T) {
 	})
 
 	assert.Equal(t, PageWorkspaceSearch, model.currentPage)
-	assert.False(t, model.showSidebar)
+	assert.True(t, model.showSidebar) // Sidebar always shown by default
 	assert.NotNil(t, model.notionClient)
 }
 
@@ -123,19 +123,30 @@ func TestModelUpdate_ToggleSidebar(t *testing.T) {
 	})
 	model.ready = true
 
-	// Initially sidebar is shown
+	// Initially sidebar is shown but not focused
 	assert.True(t, model.showSidebar)
+	assert.False(t, model.sidebarFocus)
 
-	// Toggle sidebar with Tab
+	// Tab toggles sidebar focus (not visibility)
 	tabMsg := tea.KeyMsg{Type: tea.KeyTab}
 	updatedModel, _ := model.Update(tabMsg)
 	m := updatedModel.(AppModel)
-	assert.False(t, m.showSidebar)
+	assert.True(t, m.showSidebar)  // Still visible
+	assert.True(t, m.sidebarFocus) // Now focused
 
-	// Toggle again
+	// Toggle again - unfocus sidebar
 	updatedModel, _ = m.Update(tabMsg)
 	m = updatedModel.(AppModel)
 	assert.True(t, m.showSidebar)
+	assert.False(t, m.sidebarFocus)
+
+	// Ctrl+B toggles visibility
+	ctrlBMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: false}
+	// Create proper ctrl+b key
+	ctrlBMsg = tea.KeyMsg{Type: tea.KeyCtrlB}
+	updatedModel, _ = m.Update(ctrlBMsg)
+	m = updatedModel.(AppModel)
+	assert.False(t, m.showSidebar) // Now hidden
 }
 
 func TestModelUpdate_TogglePalette(t *testing.T) {

@@ -120,14 +120,13 @@ func TestIntegration_NavigationWithMessages(t *testing.T) {
 			model.height = 24
 			model.ready = true
 
-			// Send ItemSelectedMsg
-			itemSelectedMsg := components.ItemSelectedMsg{
-				ID:    tt.selectedPageID,
-				Title: "Test Page",
-				Index: 0,
+			// Send TreeNavigationMsg (replaces ItemSelectedMsg)
+			treeNavMsg := components.TreeNavigationMsg{
+				ID:         tt.selectedPageID,
+				ObjectType: "page",
 			}
 
-			updatedModel, _ := model.Update(itemSelectedMsg)
+			updatedModel, _ := model.Update(treeNavMsg)
 			m := updatedModel.(AppModel)
 
 			// Verify navigation
@@ -143,18 +142,18 @@ func TestIntegration_GlobalKeybindings(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                string
-		keyMsg              tea.KeyMsg
-		shouldToggleSidebar bool
-		shouldTogglePalette bool
-		shouldQuit          bool
-		setupFn             func(*AppModel)
+		name                     string
+		keyMsg                   tea.KeyMsg
+		shouldToggleSidebarFocus bool
+		shouldTogglePalette      bool
+		shouldQuit               bool
+		setupFn                  func(*AppModel)
 	}{
 		{
-			name:                "Tab toggles sidebar",
-			keyMsg:              tea.KeyMsg{Type: tea.KeyTab},
-			shouldToggleSidebar: true,
-			setupFn:             func(m *AppModel) { m.showSidebar = true },
+			name:                     "Tab toggles sidebar focus",
+			keyMsg:                   tea.KeyMsg{Type: tea.KeyTab},
+			shouldToggleSidebarFocus: true,
+			setupFn:                  func(m *AppModel) { m.sidebarFocus = false },
 		},
 		{
 			name:                "Ctrl+P toggles command palette",
@@ -206,7 +205,7 @@ func TestIntegration_GlobalKeybindings(t *testing.T) {
 			tt.setupFn(&model)
 
 			// Store initial state
-			initialShowSidebar := model.showSidebar
+			initialSidebarFocus := model.sidebarFocus
 			initialShowPalette := model.showPalette
 
 			// Update with key message
@@ -218,12 +217,12 @@ func TestIntegration_GlobalKeybindings(t *testing.T) {
 				return
 			}
 
-			// Check sidebar toggle
-			if tt.shouldToggleSidebar {
+			// Check sidebar focus toggle
+			if tt.shouldToggleSidebarFocus {
 				// Re-run update to check toggle worked
 				updatedModel, _ := model.Update(tt.keyMsg)
 				m := updatedModel.(AppModel)
-				assert.NotEqual(t, initialShowSidebar, m.showSidebar)
+				assert.NotEqual(t, initialSidebarFocus, m.sidebarFocus)
 			}
 
 			// Check palette toggle
@@ -578,24 +577,23 @@ func TestIntegration_ComplexUserWorkflow(t *testing.T) {
 	assert.True(t, m.ready)
 	assert.Equal(t, PageList, m.currentPage)
 
-	// Step 2: Toggle sidebar
+	// Step 2: Toggle sidebar focus (Tab toggles focus, not visibility)
 	tabMsg := tea.KeyMsg{Type: tea.KeyTab}
 	updatedModel, _ = m.Update(tabMsg)
 	m = updatedModel.(AppModel)
-	assert.False(t, m.showSidebar)
+	assert.True(t, m.sidebarFocus) // Now focused
 
 	// Toggle back
 	updatedModel, _ = m.Update(tabMsg)
 	m = updatedModel.(AppModel)
-	assert.True(t, m.showSidebar)
+	assert.False(t, m.sidebarFocus) // Unfocused
 
-	// Step 3: Select an item
-	itemMsg := components.ItemSelectedMsg{
-		ID:    "page-123",
-		Title: "Test Page",
-		Index: 0,
+	// Step 3: Select an item via TreeNavigationMsg
+	treeNavMsg := components.TreeNavigationMsg{
+		ID:         "page-123",
+		ObjectType: "page",
 	}
-	updatedModel, _ = m.Update(itemMsg)
+	updatedModel, _ = m.Update(treeNavMsg)
 	m = updatedModel.(AppModel)
 	assert.Equal(t, PageDetail, m.currentPage)
 	assert.True(t, m.navigator.CanGoBack())
@@ -625,7 +623,7 @@ func TestIntegration_ComplexUserWorkflow(t *testing.T) {
 	assert.Equal(t, 40, m.height)
 
 	// Step 8: Verify state is consistent
-	assert.NotNil(t, m.sidebar)
+	assert.NotNil(t, m.treeView)
 	assert.NotNil(t, m.statusBar)
 	assert.NotNil(t, m.cmdPalette)
 	assert.True(t, len(m.pages) > 0)
@@ -824,7 +822,7 @@ func TestIntegration_StateConsistency(t *testing.T) {
 	m := updatedModel.(AppModel)
 
 	// Verify component initialization
-	assert.NotNil(t, m.sidebar)
+	assert.NotNil(t, m.treeView)
 	assert.NotNil(t, m.statusBar)
 	assert.NotNil(t, m.cmdPalette)
 	assert.NotNil(t, m.navigator)
