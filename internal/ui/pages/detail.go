@@ -14,15 +14,9 @@ import (
 	"github.com/Panandika/notion-tui/internal/ui/components"
 )
 
-// ViewerInterface defines the interface for the content viewer component.
-// This interface allows parallel development and easy testing with mocks.
-type ViewerInterface interface {
-	Init() tea.Cmd
-	Update(tea.Msg) (ViewerInterface, tea.Cmd)
-	View() string
-	SetBlocks([]notionapi.Block) tea.Cmd
-	SetSize(width, height int)
-}
+// ViewerInterface is imported from components package.
+// This type alias ensures compatibility with the viewer implementation.
+type ViewerInterface = components.ViewerInterface
 
 // navigationMsg is emitted when the user requests navigation.
 type navigationMsg struct {
@@ -133,9 +127,9 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
-			// Navigate back
+			// Navigate back (use exported BackNavigationMsg)
 			return dp, func() tea.Msg {
-				return navigationMsg{action: "back"}
+				return BackNavigationMsg{}
 			}
 		}
 

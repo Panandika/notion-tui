@@ -43,6 +43,9 @@ type AppModel struct {
 	err          error
 	selectedPage *pages.Page
 	currentDBID  string // Currently active database ID
+
+	// Help state
+	showHelp bool
 }
 
 // NewModelInput contains the parameters for creating a new AppModel.
@@ -403,7 +406,13 @@ func (m *AppModel) handleGlobalKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "ctrl+c", "q":
 		return true, tea.Quit
 	case "?":
-		// TODO: Show help overlay
+		// Toggle help display
+		m.showHelp = !m.showHelp
+		if m.showHelp {
+			m.statusBar.SetHelpText("↑/k ↓/j:nav | Enter:select | Esc:back | Tab:sidebar | Ctrl+P:cmd | r:refresh | q:quit | ?:close help")
+		} else {
+			m.statusBar.SetHelpText("? for help")
+		}
 		return true, nil
 	default:
 		return false, nil

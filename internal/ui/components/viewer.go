@@ -85,9 +85,19 @@ func (pv PageViewer) Init() tea.Cmd {
 	return nil
 }
 
+// ViewerInterface defines the interface for content viewer components.
+// This interface allows for different viewer implementations and easy testing.
+type ViewerInterface interface {
+	Init() tea.Cmd
+	Update(tea.Msg) (ViewerInterface, tea.Cmd)
+	View() string
+	SetBlocks([]notionapi.Block) tea.Cmd
+	SetSize(width, height int)
+}
+
 // Update handles messages and updates the PageViewer state.
 // Processes content loading, errors, window resize, and keyboard/mouse events.
-func (pv PageViewer) Update(msg tea.Msg) (PageViewer, tea.Cmd) {
+func (pv *PageViewer) Update(msg tea.Msg) (ViewerInterface, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {

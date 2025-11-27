@@ -313,7 +313,13 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sp.resultsList.ResetFilter()
 				return sp, nil
 			}
-			// Request back navigation
+			// If in results list (input not focused), go back to input
+			if !sp.input.Focused() {
+				sp.input.Focus()
+				sp.statusBar.SetHelpText("Type to search | Enter: search | Tab: toggle mode | ESC: back")
+				return sp, nil
+			}
+			// If input is focused, request back navigation
 			return sp, func() tea.Msg {
 				return BackNavigationMsg{}
 			}

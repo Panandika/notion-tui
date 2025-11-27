@@ -344,10 +344,11 @@ func TestDetailPageKeyHandling(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		key        string
-		wantNavMsg bool
-		navAction  string
+		name           string
+		key            string
+		wantNavMsg     bool
+		navAction      string
+		wantBackNavMsg bool
 	}{
 		{
 			name:       "r key triggers refresh",
@@ -361,10 +362,9 @@ func TestDetailPageKeyHandling(t *testing.T) {
 			navAction:  "edit",
 		},
 		{
-			name:       "esc key navigates back",
-			key:        "esc",
-			wantNavMsg: true,
-			navAction:  "back",
+			name:           "esc key navigates back",
+			key:            "esc",
+			wantBackNavMsg: true,
 		},
 	}
 
@@ -399,6 +399,13 @@ func TestDetailPageKeyHandling(t *testing.T) {
 				navMsg, ok := msg.(navigationMsg)
 				require.True(t, ok)
 				assert.Equal(t, tt.navAction, navMsg.action)
+			}
+
+			if tt.wantBackNavMsg {
+				require.NotNil(t, cmd)
+				msg := cmd()
+				_, ok := msg.(BackNavigationMsg)
+				require.True(t, ok)
 			}
 		})
 	}

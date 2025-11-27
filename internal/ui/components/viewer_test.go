@@ -316,7 +316,8 @@ func TestPageViewer_Update_ContentLoadedMsg(t *testing.T) {
 			pv := NewPageViewer(NewPageViewerInput{Width: 80, Height: 24})
 			pv.loading = true // Simulate loading state
 
-			updated, cmd := pv.Update(tt.msg)
+			updatedInterface, cmd := (&pv).Update(tt.msg)
+			updated := updatedInterface.(*PageViewer)
 
 			assert.Nil(t, cmd, "should not return command")
 			assert.Equal(t, tt.wantReady, updated.IsReady(), "ready state should match")
@@ -343,7 +344,8 @@ func TestPageViewer_Update_ErrorMsg(t *testing.T) {
 
 	errMsg := ErrorMsg{message: "test error", err: errors.New("underlying error")}
 
-	updated, cmd := pv.Update(errMsg)
+	updatedInterface, cmd := (&pv).Update(errMsg)
+	updated := updatedInterface.(*PageViewer)
 
 	assert.Nil(t, cmd, "should not return command")
 	assert.NotNil(t, updated.Error(), "should have error")
@@ -401,7 +403,8 @@ func TestPageViewer_Update_WindowSizeMsg(t *testing.T) {
 				Height: tt.newHeight,
 			}
 
-			updated, cmd := pv.Update(msg)
+			updatedInterface, cmd := (&pv).Update(msg)
+			updated := updatedInterface.(*PageViewer)
 
 			assert.Nil(t, cmd, "should not return command")
 			assert.Equal(t, tt.newWidth, updated.width, "width should be updated")
@@ -418,7 +421,7 @@ func TestPageViewer_Update_KeyMsg(t *testing.T) {
 
 	// Test down key
 	msg := tea.KeyMsg{Type: tea.KeyDown}
-	updated, cmd := pv.Update(msg)
+	updated, cmd := (&pv).Update(msg)
 
 	// Viewport should handle the key
 	assert.NotNil(t, updated, "should return updated model")
@@ -565,7 +568,8 @@ func TestPageViewer_Integration(t *testing.T) {
 	msg := cmd()
 
 	// Update with the message
-	updated, _ := pv.Update(msg)
+	updatedInterface, _ := (&pv).Update(msg)
+	updated := updatedInterface.(*PageViewer)
 
 	// Verify final state
 	assert.True(t, updated.IsReady(), "should be ready")
