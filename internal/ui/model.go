@@ -207,10 +207,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
+		// Check if we're on the search page - it needs special key handling
+		isSearchPage := m.currentPage == PageWorkspaceSearch
+
 		// Handle mode-specific keys FIRST before global keys
 		switch msg.String() {
 		case "tab":
-			// Toggle sidebar
+			// On search page, let it handle Tab for focus switching between input and results
+			if isSearchPage {
+				break // Fall through to page delegation
+			}
+			// Otherwise toggle sidebar
 			m.showSidebar = !m.showSidebar
 			return m, nil
 
@@ -243,7 +250,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 
 		case "esc":
-			// Handle back navigation
+			// On search page, let it handle Esc first (e.g., to clear filter)
+			// then fall through to page delegation which will handle back navigation
+			if isSearchPage {
+				break // Fall through to page delegation
+			}
+			// Handle back navigation for other pages
 			if m.navigator.CanGoBack() {
 				previousPage, ok := m.navigator.Back()
 				if ok {
@@ -284,6 +296,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Navigate to page detail
 		return m, m.navigateToDetail(msg.ID)
+
+	case pages.BackNavigationMsg:
+		// Handle back navigation request from search page
+		if m.navigator.CanGoBack() {
+			previousPage, ok := m.navigator.Back()
+			if ok {
+				m.currentPage = previousPage
+				return m, nil
+			}
+		}
 	}
 
 	// Delegate to current page
@@ -410,11 +432,17 @@ func (m *AppModel) navigateTo(pageID PageID) tea.Cmd {
 
 // navigateToDetail navigates to the detail page for a specific Notion page.
 func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
+	// Create viewer for the detail page
+	viewer := components.NewPageViewer(components.NewPageViewerInput{
+		Width:  m.width,
+		Height: m.height - 2, // Reserve space for status bar
+	})
+
 	// Create or update detail page
 	detailPage := pages.NewDetailPage(pages.NewDetailPageInput{
 		Width:        m.width,
 		Height:       m.height,
-		Viewer:       nil, // TODO: Add viewer when component is ready
+		Viewer:       &viewer,
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		PageID:       notionPageID,
@@ -450,10 +478,14 @@ func (m *AppModel) createPage(pageID PageID) {
 	case PageDetail:
 		// Detail page is created on-demand with specific page ID
 		// This case shouldn't be hit normally
+		viewer := components.NewPageViewer(components.NewPageViewerInput{
+			Width:  m.width,
+			Height: m.height - 2,
+		})
 		detailPage := pages.NewDetailPage(pages.NewDetailPageInput{
 			Width:        m.width,
 			Height:       m.height,
-			Viewer:       nil,
+			Viewer:       &viewer,
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			PageID:       "",

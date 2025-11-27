@@ -87,6 +87,9 @@ func (m SearchNavigationMsg) PageID() string {
 	return m.ID
 }
 
+// BackNavigationMsg is sent when user wants to go back to the previous page.
+type BackNavigationMsg struct{}
+
 // SearchPage is a page component for cross-page search.
 type SearchPage struct {
 	input        textinput.Model
@@ -244,6 +247,11 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sp.nextCursor = msg.nextCursor
 		sp.updateResultsList()
 
+		// Auto-focus results list when we have results for better UX
+		if len(sp.results) > 0 {
+			sp.input.Blur()
+		}
+
 		modeLabel := "workspace"
 		if sp.mode == SearchModeDatabase {
 			modeLabel = "database"
@@ -305,7 +313,10 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sp.resultsList.ResetFilter()
 				return sp, nil
 			}
-			// Otherwise, let parent handle (go back)
+			// Request back navigation
+			return sp, func() tea.Msg {
+				return BackNavigationMsg{}
+			}
 		}
 
 	case tea.WindowSizeMsg:
