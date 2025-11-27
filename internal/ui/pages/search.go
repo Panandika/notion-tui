@@ -192,7 +192,7 @@ func NewSearchPage(input NewSearchPageInput) SearchPage {
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
 
-	helpText := "Type to search | Enter: select | Tab: toggle mode | ESC: back"
+	helpText := "Type to search | Enter: search | Ctrl+T: switch mode | ESC: back"
 	statusBar.SetHelpText(helpText)
 
 	spinner := components.NewSpinner("Searching...")
@@ -256,9 +256,9 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sp.mode == SearchModeDatabase {
 			modeLabel = "database"
 		}
-		helpText := fmt.Sprintf("%d results (%s) | Enter: select | Tab: toggle mode | ESC: back", len(sp.results), modeLabel)
+		helpText := fmt.Sprintf("%d results (%s) | Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
 		if sp.hasMore {
-			helpText = fmt.Sprintf("%d+ results (%s) | Enter: select | Tab: toggle mode | ESC: back", len(sp.results), modeLabel)
+			helpText = fmt.Sprintf("%d+ results (%s) | Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back", len(sp.results), modeLabel)
 		}
 		sp.statusBar.SetHelpText(helpText)
 		sp.statusBar.SetSyncStatus(components.StatusSynced)
@@ -288,18 +288,15 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "tab":
-			// Toggle between input focus and results, or toggle search mode
+			// Toggle focus between input and results list
 			if sp.input.Focused() && len(sp.results) > 0 {
-				// If we have results, move focus to results list
 				sp.input.Blur()
+				sp.statusBar.SetHelpText("Tab: input | Enter: select | Ctrl+T: switch mode | ESC: back")
 			} else if !sp.input.Focused() {
-				// If in results, toggle mode and refocus input
-				sp.toggleMode()
 				sp.input.Focus()
-			} else {
-				// Toggle search mode
-				sp.toggleMode()
+				sp.statusBar.SetHelpText("Type to search | Tab: results | Ctrl+T: switch mode | ESC: back")
 			}
+			// If no results, Tab does nothing (stay in input)
 			return sp, nil
 
 		case "ctrl+t":
@@ -316,7 +313,7 @@ func (sp *SearchPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If in results list (input not focused), go back to input
 			if !sp.input.Focused() {
 				sp.input.Focus()
-				sp.statusBar.SetHelpText("Type to search | Enter: search | Tab: toggle mode | ESC: back")
+				sp.statusBar.SetHelpText("Type to search | Tab: results | Ctrl+T: switch mode | ESC: back")
 				return sp, nil
 			}
 			// If input is focused, request back navigation
@@ -377,7 +374,7 @@ func (sp *SearchPage) toggleMode() {
 	if sp.mode == SearchModeDatabase {
 		modeLabel = "database"
 	}
-	sp.statusBar.SetHelpText(fmt.Sprintf("Mode: %s | Type to search | Tab: toggle mode | ESC: back", modeLabel))
+	sp.statusBar.SetHelpText(fmt.Sprintf("Mode: %s | Type to search | Ctrl+T: switch mode | ESC: back", modeLabel))
 }
 
 // View renders the search page.
