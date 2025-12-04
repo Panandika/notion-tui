@@ -28,6 +28,8 @@ const (
 	PageDatabaseList PageID = "database-list"
 	// PageWorkspaceSearch represents the workspace-wide search page.
 	PageWorkspaceSearch PageID = "workspace-search"
+	// PageDashboard represents the dashboard page.
+	PageDashboard PageID = "dashboard"
 )
 
 const (

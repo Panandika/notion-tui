@@ -82,11 +82,8 @@ func NewModel(input NewModelInput) AppModel {
 	}
 
 	// Determine initial page based on config
-	// If no databases configured, start with workspace search
-	initialPage := PageList
-	if !input.Config.HasDatabases() {
-		initialPage = PageWorkspaceSearch
-	}
+	// Start with Dashboard
+	initialPage := PageDashboard
 
 	// Initialize navigator
 	nav := NewNavigator(NewNavigatorInput{
@@ -199,6 +196,14 @@ func (m *AppModel) initializePages() {
 		})
 		m.pages[PageWorkspaceSearch] = &searchPage
 	}
+
+	// Create Dashboard page
+	dashboardPage := pages.NewDashboardPage(pages.NewDashboardPageInput{
+		Width:  m.width,
+		Height: m.height,
+		Config: m.config,
+	})
+	m.pages[PageDashboard] = &dashboardPage
 
 	// DetailPage and EditPage will be created on-demand when navigating
 	// This avoids creating pages with invalid state before we have page IDs
@@ -577,6 +582,14 @@ func (m *AppModel) createPage(pageID PageID) {
 			DefaultDBID: m.currentDBID,
 		})
 		m.pages[pageID] = &dbListPage
+
+	case PageDashboard:
+		dashboardPage := pages.NewDashboardPage(pages.NewDashboardPageInput{
+			Width:  m.width,
+			Height: m.height,
+			Config: m.config,
+		})
+		m.pages[pageID] = &dashboardPage
 	}
 }
 
