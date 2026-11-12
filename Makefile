@@ -30,7 +30,7 @@ install-tools:
 
 build: fmt vet
 	@echo "Building ${BINARY_NAME}..."
-	go build ${GOFLAGS} ${LDFLAGS} -o ${BINARY_NAME} ./cmd/main.go
+	go build ${GOFLAGS} ${LDFLAGS} -o ${BINARY_NAME} .
 
 run: build
 	@echo "Running ${BINARY_NAME}..."

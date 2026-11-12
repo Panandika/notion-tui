@@ -32,7 +32,7 @@ func TestNewModel(t *testing.T) {
 	assert.NotNil(t, model.notionClient)
 	assert.NotNil(t, model.cache)
 	assert.NotNil(t, model.navigator)
-	assert.Equal(t, PageList, model.currentPage)
+	assert.Equal(t, PageDashboard, model.currentPage)
 	assert.False(t, model.ready)
 	assert.True(t, model.showSidebar)
 	assert.False(t, model.showPalette)
@@ -40,7 +40,7 @@ func TestNewModel(t *testing.T) {
 }
 
 func TestNewModel_NoDatabases(t *testing.T) {
-	// Test model creation without databases - should start with workspace search
+	// Test model creation without databases - still starts on the dashboard
 	cfg := &config.Config{
 		NotionToken: "test_token",
 		Debug:       false,
@@ -52,7 +52,7 @@ func TestNewModel_NoDatabases(t *testing.T) {
 		Cache:  nil,
 	})
 
-	assert.Equal(t, PageWorkspaceSearch, model.currentPage)
+	assert.Equal(t, PageDashboard, model.currentPage)
 	assert.True(t, model.showSidebar) // Sidebar always shown by default
 	assert.NotNil(t, model.notionClient)
 }
@@ -141,9 +141,7 @@ func TestModelUpdate_ToggleSidebar(t *testing.T) {
 	assert.False(t, m.sidebarFocus)
 
 	// Ctrl+B toggles visibility
-	ctrlBMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: false}
-	// Create proper ctrl+b key
-	ctrlBMsg = tea.KeyMsg{Type: tea.KeyCtrlB}
+	ctrlBMsg := tea.KeyMsg{Type: tea.KeyCtrlB}
 	updatedModel, _ = m.Update(ctrlBMsg)
 	m = updatedModel.(AppModel)
 	assert.False(t, m.showSidebar) // Now hidden
@@ -245,8 +243,8 @@ func TestModelPageRegistry(t *testing.T) {
 	// Check that ListPage is registered
 	assert.NotNil(t, model.pages[PageList])
 
-	// Current page should be ListPage
-	assert.Equal(t, PageList, model.currentPage)
+	// App always starts on the dashboard
+	assert.Equal(t, PageDashboard, model.currentPage)
 }
 
 func TestModelNavigation(t *testing.T) {
@@ -267,7 +265,7 @@ func TestModelNavigation(t *testing.T) {
 	model.ready = true
 
 	// Check initial state
-	assert.Equal(t, PageList, model.currentPage)
+	assert.Equal(t, PageDashboard, model.currentPage)
 	assert.False(t, model.navigator.CanGoBack())
 
 	// Navigate to detail page
@@ -277,7 +275,7 @@ func TestModelNavigation(t *testing.T) {
 
 	// Navigate back
 	model.goBack()
-	assert.Equal(t, PageList, model.currentPage)
+	assert.Equal(t, PageDashboard, model.currentPage)
 	assert.False(t, model.navigator.CanGoBack())
 }
 
@@ -297,7 +295,7 @@ func TestModelNavigator(t *testing.T) {
 
 	nav := model.Navigator()
 	assert.NotNil(t, nav)
-	assert.Equal(t, PageList, nav.CurrentPage())
+	assert.Equal(t, PageDashboard, nav.CurrentPage())
 }
 
 func TestModelCurrentPage(t *testing.T) {
@@ -314,7 +312,7 @@ func TestModelCurrentPage(t *testing.T) {
 		Cache:  nil,
 	})
 
-	assert.Equal(t, PageList, model.CurrentPage())
+	assert.Equal(t, PageDashboard, model.CurrentPage())
 }
 
 func TestModelFindPageByID(t *testing.T) {
@@ -425,6 +423,6 @@ func TestModelBackNavigation(t *testing.T) {
 	updatedModel, _ := model.Update(escMsg)
 	m := updatedModel.(AppModel)
 
-	// Should have navigated back to list
-	assert.Equal(t, PageList, m.currentPage)
+	// Should have navigated back to the dashboard
+	assert.Equal(t, PageDashboard, m.currentPage)
 }

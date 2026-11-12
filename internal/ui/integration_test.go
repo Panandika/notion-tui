@@ -26,20 +26,20 @@ func TestIntegration_NavigationFlow(t *testing.T) {
 		expectedPageAfterBack PageID
 	}{
 		{
-			name:                  "list to detail and back",
-			initialPage:           PageList,
+			name:                  "dashboard to detail and back",
+			initialPage:           PageDashboard,
 			navigateTo:            PageDetail,
 			expectedPageAfterNav:  PageDetail,
 			expectedCanGoBack:     true,
-			expectedPageAfterBack: PageList,
+			expectedPageAfterBack: PageDashboard,
 		},
 		{
-			name:                  "list to edit and back",
-			initialPage:           PageList,
+			name:                  "dashboard to edit and back",
+			initialPage:           PageDashboard,
 			navigateTo:            PageEdit,
 			expectedPageAfterNav:  PageEdit,
 			expectedCanGoBack:     true,
-			expectedPageAfterBack: PageList,
+			expectedPageAfterBack: PageDashboard,
 		},
 	}
 
@@ -575,7 +575,7 @@ func TestIntegration_ComplexUserWorkflow(t *testing.T) {
 	updatedModel, _ := model.Update(windowMsg)
 	m := updatedModel.(AppModel)
 	assert.True(t, m.ready)
-	assert.Equal(t, PageList, m.currentPage)
+	assert.Equal(t, PageDashboard, m.currentPage)
 
 	// Step 2: Toggle sidebar focus (Tab toggles focus, not visibility)
 	tabMsg := tea.KeyMsg{Type: tea.KeyTab}
@@ -613,7 +613,7 @@ func TestIntegration_ComplexUserWorkflow(t *testing.T) {
 	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
 	updatedModel, _ = m.Update(escMsg)
 	m = updatedModel.(AppModel)
-	assert.Equal(t, PageList, m.currentPage)
+	assert.Equal(t, PageDashboard, m.currentPage)
 
 	// Step 7: Resize window
 	resizeMsg := tea.WindowSizeMsg{Width: 120, Height: 40}
@@ -841,7 +841,7 @@ func TestIntegration_StateConsistency(t *testing.T) {
 	if m.navigator.CanGoBack() {
 		previousPage, ok := m.navigator.Back()
 		assert.True(t, ok)
-		assert.Equal(t, PageList, previousPage)
+		assert.Equal(t, PageDashboard, previousPage)
 	}
 
 	// Verify pages registry is maintained

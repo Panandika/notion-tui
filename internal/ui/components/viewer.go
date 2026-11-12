@@ -56,6 +56,32 @@ type PageViewer struct {
 	height   int
 }
 
+// The viewer draws a rounded border with padding around the viewport. Width
+// and height given to the viewer are the outer size, including that frame.
+const (
+	viewerBorder   = 2 // One cell per side
+	viewerPaddingX = 2
+	viewerPaddingY = 1
+)
+
+// viewportWidth returns the text width inside the viewer frame.
+func viewportWidth(outer int) int {
+	inner := outer - viewerBorder - 2*viewerPaddingX
+	if inner < 1 {
+		return 1
+	}
+	return inner
+}
+
+// viewportHeight returns the text height inside the viewer frame.
+func viewportHeight(outer int) int {
+	inner := outer - viewerBorder - 2*viewerPaddingY
+	if inner < 1 {
+		return 1
+	}
+	return inner
+}
+
 // NewPageViewerInput contains parameters for creating a new PageViewer.
 // Following CS-5: input struct for functions with multiple parameters.
 type NewPageViewerInput struct {
@@ -66,7 +92,7 @@ type NewPageViewerInput struct {
 // NewPageViewer creates a new PageViewer component with the given dimensions.
 // The viewport is initialized but not yet ready until content is loaded.
 func NewPageViewer(input NewPageViewerInput) PageViewer {
-	vp := viewport.New(input.Width, input.Height)
+	vp := viewport.New(viewportWidth(input.Width), viewportHeight(input.Height))
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 3
 
@@ -122,8 +148,8 @@ func (pv *PageViewer) Update(msg tea.Msg) (ViewerInterface, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		pv.width = msg.Width
 		pv.height = msg.Height
-		pv.viewport.Width = msg.Width
-		pv.viewport.Height = msg.Height
+		pv.viewport.Width = viewportWidth(msg.Width)
+		pv.viewport.Height = viewportHeight(msg.Height)
 		if pv.ready {
 			pv.viewport.SetContent(pv.content)
 		}
@@ -149,9 +175,9 @@ func (pv PageViewer) View() string {
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#374151")).
-		Padding(1, 2).
-		Width(pv.width).
-		Height(pv.height)
+		Padding(viewerPaddingY, viewerPaddingX).
+		Width(pv.width - viewerBorder).
+		Height(pv.height - viewerBorder)
 
 	if pv.loading {
 		return mutedStyle.Render("Loading content...")
@@ -186,7 +212,7 @@ func (pv PageViewer) SetBlocks(blocks []notionapi.Block) tea.Cmd {
 		// Render with glamour using dark theme
 		renderer, err := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(pv.width-4), // Account for padding
+			glamour.WithWordWrap(viewportWidth(pv.width)), // Fit inside border and padding
 		)
 		if err != nil {
 			return ErrorMsg{message: "failed to create renderer", err: err}
@@ -216,8 +242,8 @@ func (pv *PageViewer) SetContent(content string) {
 func (pv *PageViewer) SetSize(width, height int) {
 	pv.width = width
 	pv.height = height
-	pv.viewport.Width = width
-	pv.viewport.Height = height
+	pv.viewport.Width = viewportWidth(width)
+	pv.viewport.Height = viewportHeight(height)
 	if pv.ready {
 		pv.viewport.SetContent(pv.content)
 	}

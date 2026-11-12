@@ -59,11 +59,12 @@ func init() {
 		"enable debug logging (env: NOTION_TUI_DEBUG)",
 	)
 
-	// Bind flags to viper
-	viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
-	viper.BindPFlag("notion_token", rootCmd.PersistentFlags().Lookup("token"))
-	viper.BindPFlag("database_id", rootCmd.PersistentFlags().Lookup("database-id"))
-	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	// Bind flags to viper. BindPFlag only fails for a nil flag, and every
+	// flag looked up here is defined just above.
+	_ = viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
+	_ = viper.BindPFlag("notion_token", rootCmd.PersistentFlags().Lookup("token"))
+	_ = viper.BindPFlag("database_id", rootCmd.PersistentFlags().Lookup("database-id"))
+	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 
 	// Automatically bind environment variables with NOTION_TUI_ prefix
 	viper.SetEnvPrefix("NOTION_TUI")

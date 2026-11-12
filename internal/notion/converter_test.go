@@ -693,6 +693,7 @@ First paragraph.
 
 - Item 1
 - Item 2
+
 ---
 
 > A wise quote`

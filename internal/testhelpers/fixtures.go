@@ -1,6 +1,7 @@
 package testhelpers
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/jomei/notionapi"
@@ -354,12 +355,11 @@ func newBasicBlock(blockType notionapi.BlockType) notionapi.BasicBlock {
 }
 
 // testIDCounter is used to generate unique IDs for test blocks.
-var testIDCounter int
+var testIDCounter atomic.Int64
 
 // generateTestID generates a unique test ID.
 func generateTestID() string {
-	testIDCounter++
-	return "test-block-" + itoa(testIDCounter)
+	return "test-block-" + itoa(int(testIDCounter.Add(1)))
 }
 
 // itoa converts an integer to a string without importing strconv.
@@ -391,5 +391,5 @@ func itoa(i int) string {
 
 // ResetTestIDCounter resets the test ID counter. Useful for deterministic tests.
 func ResetTestIDCounter() {
-	testIDCounter = 0
+	testIDCounter.Store(0)
 }

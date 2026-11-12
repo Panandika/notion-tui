@@ -472,11 +472,12 @@ func (sp *SearchPage) searchWorkspace(ctx context.Context, query string) searchR
 	results := make([]SearchResult, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		snippet := ""
-		if r.ParentType == "workspace" {
+		switch r.ParentType {
+		case "workspace":
 			snippet = "Root level"
-		} else if r.ParentType == "database_id" {
+		case "database_id":
 			snippet = "In database"
-		} else if r.ParentType == "page_id" {
+		case "page_id":
 			snippet = "Child page"
 		}
 
@@ -629,4 +630,10 @@ func (sp *SearchPage) SetMode(mode SearchMode) {
 	} else {
 		sp.input.Placeholder = "Search in current database..."
 	}
+}
+
+// CapturesInput reports whether the search box or the results filter is
+// focused, in which case key presses are text input, not global shortcuts.
+func (sp *SearchPage) CapturesInput() bool {
+	return sp.input.Focused() || sp.resultsList.SettingFilter()
 }

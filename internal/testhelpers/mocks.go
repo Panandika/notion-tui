@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/jomei/notionapi"
+
+	"github.com/Panandika/notion-tui/internal/notion"
 )
 
 // MockNotionClient provides a mock implementation for testing Notion API interactions.

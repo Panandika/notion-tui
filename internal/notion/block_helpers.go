@@ -74,6 +74,21 @@ func convertAnnotations(rt notionapi.RichText) string {
 		return ""
 	}
 
+	// Emphasis markers must touch the text: "** bold **" is not bold in
+	// Markdown. Keep surrounding whitespace outside the markers. Inline code
+	// is left whole because its spaces are part of the code.
+	leading, trailing := "", ""
+	isCode := rt.Annotations != nil && rt.Annotations.Code
+	if !isCode {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return text
+		}
+		start := strings.Index(text, trimmed)
+		leading, trailing = text[:start], text[start+len(trimmed):]
+		text = trimmed
+	}
+
 	// Apply annotations in a specific order to ensure proper nesting
 	if rt.Annotations != nil {
 		if rt.Annotations.Code {
@@ -99,5 +114,5 @@ func convertAnnotations(rt notionapi.RichText) string {
 		text = fmt.Sprintf("[%s](%s)", text, rt.Href)
 	}
 
-	return text
+	return leading + text + trailing
 }

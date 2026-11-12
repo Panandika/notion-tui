@@ -3,9 +3,10 @@ package pages
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Panandika/notion-tui/internal/config"
 	"github.com/Panandika/notion-tui/internal/ui/components"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestDashboardPage_Init(t *testing.T) {

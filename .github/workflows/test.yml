@@ -17,7 +17,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
         cache: true
@@ -34,16 +34,16 @@ jobs:
       run: go vet ./...
 
     - name: Install golangci-lint
-      uses: golangci/golangci-lint-action@v3
+      uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
+        version: v2.15.0
         args: --timeout=5m
 
     - name: Run tests
       run: go test -v -race -coverprofile=coverage.out ./...
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.out
         flags: unittests
@@ -61,7 +61,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
         cache: true
@@ -70,4 +70,4 @@ jobs:
       env:
         GOOS: ${{ matrix.os }}
         GOARCH: ${{ matrix.arch }}
-      run: go build -o notion-tui ./cmd/main.go
+      run: go build -o notion-tui .
