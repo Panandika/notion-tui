@@ -84,6 +84,23 @@ func (m *MockNotionClient) DeleteBlock(ctx context.Context, id string) (notionap
 	return nil, errors.New("not implemented")
 }
 
+// The list page never touches page Markdown; these only satisfy the interface.
+func (m *MockNotionClient) GetPageMarkdown(context.Context, string) (*notion.PageMarkdown, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) UpdatePageMarkdown(context.Context, string, []notion.ContentUpdate) (*notion.PageMarkdown, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) ReplacePageMarkdown(context.Context, string, string) (*notion.PageMarkdown, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) CreatePageMarkdown(context.Context, string, string) (*notion.CreatedPage, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (m *MockNotionClient) Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error) {
 	if m.SearchFunc != nil {
 		return m.SearchFunc(ctx, input)

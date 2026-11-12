@@ -15,6 +15,12 @@ type NotionClient interface {
 	GetPage(ctx context.Context, id string) (*notionapi.Page, error)
 	UpdatePage(ctx context.Context, id string, req *notionapi.PageUpdateRequest) (*notionapi.Page, error)
 
+	// Page content as Markdown: one call per page, nested content included
+	GetPageMarkdown(ctx context.Context, id string) (*notion.PageMarkdown, error)
+	UpdatePageMarkdown(ctx context.Context, id string, updates []notion.ContentUpdate) (*notion.PageMarkdown, error)
+	ReplacePageMarkdown(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
+	CreatePageMarkdown(ctx context.Context, parentPageID, markdown string) (*notion.CreatedPage, error)
+
 	// Block operations
 	GetBlocks(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error)
 	AppendBlocks(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)

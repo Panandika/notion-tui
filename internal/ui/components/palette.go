@@ -116,14 +116,20 @@ func (p *CommandPalette) addBuiltInCommands() {
 		},
 		{
 			name:        "New Page",
-			description: "Create a new Notion page (coming soon)",
+			description: "Create a page inside the open page, written in your editor",
 			actionType:  "new-page",
 			action:      func() tea.Cmd { return nil },
 		},
 		{
 			name:        "Export Page",
-			description: "Export current page (coming soon)",
+			description: "Export the open page as a Markdown file",
 			actionType:  "export",
+			action:      func() tea.Cmd { return nil },
+		},
+		{
+			name:        "Help",
+			description: "Show keyboard shortcuts",
+			actionType:  "help",
 			action:      func() tea.Cmd { return nil },
 		},
 		{

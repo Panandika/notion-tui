@@ -1,269 +1,185 @@
 # Notion TUI
 
-A powerful, keyboard-driven terminal user interface for Notion, built with Go and Bubble Tea.
+A keyboard-driven terminal client for Notion, built with Go and Bubble Tea.
 
-Browse, view, edit, and manage your Notion databases and pages without leaving the terminal.
+Browse your workspace, read pages, edit them in your own editor, create pages and export Markdown without leaving the terminal.
 
 ## Features
 
-- **Browse Pages** - Navigate your Notion databases with intuitive keyboard controls
-- **View Content** - Render Notion pages with markdown formatting and syntax highlighting
-- **Edit Pages** - Edit the text of a block from the terminal
-- **Search** - Fast fuzzy search across pages in sidebar and dedicated search view
-- **Multi-Database Support** - Switch between multiple Notion databases seamlessly
-- **Offline Caching** - Local file cache for faster load times and offline access
-- **Rate Limiting** - Built-in respect for Notion API limits (3 req/sec)
-- **Keyboard-Driven** - Vim-style navigation with no mouse required
-- **Beautiful UI** - Terminal styling with Lipgloss and responsive layouts
+- **Browse** - Workspace tree in a sidebar, database page lists, a dashboard to start from
+- **Read** - Pages rendered as Markdown in the terminal, including nested content, toggles, callouts, columns and tables
+- **Edit** - Open a page in `$VISUAL` / `$EDITOR`; only the parts you changed are written back, so formatting elsewhere is untouched
+- **Create** - New pages inside the page you are viewing, written in your editor
+- **Export** - Save a page as plain Markdown, from the app or with `notion-tui export`
+- **Search** - Search the workspace or a single database
+- **Cache** - Page content is cached on disk for faster reopening
+- **Rate limiting** - Stays within Notion's API limits and waits when the API asks it to
 
 ## Installation
 
-### From Binary (Recommended)
-
-Download the latest release for your platform from the [Releases](https://github.com/Panandika/notion-tui/releases) page.
-
-**Linux/macOS:**
-```bash
-# Download and extract (replace VERSION and OS/ARCH as needed)
-curl -LO https://github.com/Panandika/notion-tui/releases/download/vVERSION/notion-tui-VERSION-OS-ARCH.tar.gz
-tar -xzf notion-tui-VERSION-OS-ARCH.tar.gz
-sudo mv notion-tui /usr/local/bin/
-
-# Make executable
-chmod +x /usr/local/bin/notion-tui
-```
-
-**Windows:**
-Download the `.zip` file and extract `notion-tui.exe` to a directory in your PATH.
-
 ### From Source
 
-Requires Go 1.21 or later.
+Requires Go 1.25 or later.
 
 ```bash
 git clone https://github.com/Panandika/notion-tui.git
 cd notion-tui
-go build -o notion-tui main.go
+go build -o notion-tui .
 
-# Optional: Move to PATH
+# Optional: move to PATH
 sudo mv notion-tui /usr/local/bin/  # Linux/macOS
-# or add to PATH on Windows
 ```
+
+Prebuilt binaries will be attached to [Releases](https://github.com/Panandika/notion-tui/releases) once a version is tagged.
 
 ## Quick Start
 
-### 1. Create a Notion Integration
+### 1. Create a token
 
-1. Go to [https://www.notion.so/my-integrations](https://www.notion.so/my-integrations)
-2. Click **"+ New integration"**
-3. Give it a name (e.g., "Notion TUI")
-4. Copy the **Integration Token** (starts with `secret_`)
+Open the [Notion developer portal](https://www.notion.so/profile/integrations) and create one of:
 
-### 2. Share Database with Integration
+- **Internal connection** (recommended to start): acts as a bot and can only reach pages you share with it. Give it read, update and insert content capabilities.
+- **Personal access token**: acts as you and can reach everything you can in the chosen workspace.
 
-1. Open your Notion database in the browser
+Copy the token (it starts with `ntn_`).
+
+### 2. Share content (internal connection only)
+
+1. Open a page or database in Notion
 2. Click **"..."** (top right) → **"Add connections"**
-3. Select your integration
-4. Copy the database ID from the URL:
-   - URL format: `https://notion.so/workspace/DATABASE_ID?v=...`
-   - The database ID is the 32-character UUID
+3. Select your connection
 
-### 3. Configure Notion TUI
+Pages inside a shared page are shared too.
 
-**Option A: Environment Variables** (Quick)
+### 3. Configure
+
+**Option A: environment variable**
 ```bash
-export NOTION_TUI_NOTION_TOKEN="secret_xxxxxxxxxxxxx"
-export NOTION_TUI_DATABASE_ID="your-database-id"
+export NOTION_TUI_NOTION_TOKEN="ntn_xxxxxxxxxxxxx"
 notion-tui
 ```
 
-**Option B: Configuration File** (Recommended)
+**Option B: config file**
 ```bash
-# Create config directory
 mkdir -p ~/.config/notion-tui
-
-# Create config file
-cat > ~/.config/notion-tui/config.yaml << EOF
-notion_token: "secret_xxxxxxxxxxxxx"
-databases:
-  - id: "database-id-1"
-    name: "My Tasks"
-    icon: "✅"
-  - id: "database-id-2"
-    name: "Notes"
-    icon: "📝"
-default_database: "database-id-1"
-cache_dir: "~/.cache/notion-tui"
-debug: false
-EOF
-
-# Launch
+echo 'notion_token: "ntn_xxxxxxxxxxxxx"' > ~/.config/notion-tui/config.yaml
 notion-tui
 ```
 
-**Option C: Command-Line Flags**
+**Option C: flags**
 ```bash
-notion-tui --token "secret_xxx" --database-id "db-id"
+notion-tui --token "ntn_xxx" --database-id "db-id"
 ```
 
-**Configuration Priority:** Flags > Environment Variables > Config File > Defaults
+**Priority:** flags > environment variables > config file > defaults
+
+A database ID is optional. Without one the app starts from the workspace tree. To find a database ID, open the database in a browser: it is the 32-character ID in the URL before `?v=`.
 
 ## Usage
 
-### Keyboard Shortcuts
+Press `?` in the app for the full key reference.
 
-#### Navigation
+### Everywhere
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `h` / `←` | Move left |
-| `l` / `→` | Move right |
-| `Enter` | Select/Open item |
-| `Esc` | Go back / Cancel |
-| `q` / `Ctrl+C` | Quit application |
+| `?` | Show help |
+| `Ctrl+P` | Command palette |
+| `Ctrl+B` | Show or hide the sidebar |
+| `Tab` | Switch focus between sidebar and page |
+| `Esc` | Go back |
+| `q` / `Ctrl+C` | Quit |
 
-#### Search & Commands
+### Sidebar
 | Key | Action |
 |-----|--------|
-| `/` | Focus sidebar search |
-| `Ctrl+P` | Open command palette |
-| `Ctrl+D` | Switch database |
+| `j` / `↓`, `k` / `↑` | Move |
+| `h` / `←`, `l` / `→` | Collapse / expand |
+| `Enter` | Open a page or database; expand a parent |
 
-#### Page View
+### Page
 | Key | Action |
 |-----|--------|
-| `e` | Enter edit mode |
-| `r` | Refresh page from API |
-| `m` | Load more blocks (pagination) |
+| `j` / `↓`, `k` / `↑` | Scroll |
+| `e` | Edit the page in your editor |
+| `Ctrl+N` | New page inside this page |
+| `r` | Reload from Notion |
 
-#### Edit Mode
-| Key | Action |
-|-----|--------|
-| `Ctrl+S` | Save changes |
-| `Ctrl+R` | Discard changes and refresh |
-| `Esc` | Cancel editing |
+### Command palette
+`Ctrl+P` opens it; move with `j` / `k`, filter with `/`, run with `Enter`. Commands: Search Workspace, Switch Database, Refresh, New Page, Export Page, Help, Quit.
 
-#### Help
-| Key | Action |
-|-----|--------|
-| `?` | Toggle help screen |
+## Editing
+
+Pressing `e` on a page:
+
+1. fetches the page's current content from Notion,
+2. opens it in `$VISUAL`, or `$EDITOR`, or `vi`,
+3. on exit, sends only the changed parts back.
+
+Things to know:
+
+- The file is Notion-flavored Markdown: mostly Markdown, with tags such as `<b>`, `<toggle>`, `<callout>` and `<mention>` for things Markdown cannot express. Leave tags you do not want to change as they are.
+- Blocks you did not touch are not rewritten, so their formatting and IDs stay.
+- Child pages and databases cannot be deleted by an edit. Notion rejects such a save.
+- If a save fails, your text is not lost: the app shows the path of the file holding it.
+- Very large pages that Notion returns only partially can be read but not edited.
+
+Set an editor that waits until the file is closed, for example:
+
+```bash
+export EDITOR="nvim"
+export EDITOR="code --wait"
+```
+
+## Creating pages
+
+`Ctrl+N` (or **New Page** in the palette) opens your editor with a template. The first `# heading` becomes the title. The page is created inside the page you are viewing. Leaving the template unchanged cancels.
+
+## Exporting
+
+From the app, **Export Page** in the palette writes `<page-title>.md` to the directory the app was started in. Existing files are never overwritten; a numbered name is used instead.
+
+From the shell:
+
+```bash
+notion-tui export <page-id> > page.md
+notion-tui export <page-id> --output page.md
+```
+
+Exports are plain Markdown: Notion-specific tags are converted (toggles and callouts become quotes, mentions become links).
 
 ## Configuration
 
-### Configuration File
+The default configuration path is `~/.config/notion-tui/config.yaml`; `--config` selects another file. See [config.example.yaml](config.example.yaml) for every option.
 
-The default configuration path is `~/.config/notion-tui/config.yaml`. You can specify a custom path with the `--config` flag.
-
-**Full Configuration Example:**
-```yaml
-# Notion API token (required)
-# Get from: https://www.notion.so/my-integrations
-notion_token: "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-
-# Database configurations (multiple databases supported)
-databases:
-  - id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    name: "My Tasks"
-    icon: "✅"
-
-  - id: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
-    name: "Notes"
-    icon: "📝"
-
-  - id: "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
-    name: "Projects"
-    icon: "🚀"
-
-# Default database to show on startup
-default_database: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-# Cache directory for offline access (default: ~/.cache/notion-tui)
-cache_dir: "~/.cache/notion-tui"
-
-# Enable debug logging (default: false)
-# Logs written to debug.log in current directory
-debug: false
-```
-
-### Environment Variables
-
-All configuration options can be set via environment variables with the `NOTION_TUI_` prefix:
+All options can also be set through environment variables with the `NOTION_TUI_` prefix:
 
 ```bash
-export NOTION_TUI_NOTION_TOKEN="secret_xxx"
+export NOTION_TUI_NOTION_TOKEN="ntn_xxx"
 export NOTION_TUI_DATABASE_ID="db-id"
 export NOTION_TUI_DEBUG=true
 export NOTION_TUI_CACHE_DIR="~/.cache/notion-tui"
 ```
 
-## Features in Detail
+### Multiple databases
 
-### Offline Caching
+List databases under `databases:` in the config file with a name and optional icon, and set `default_database`. **Switch Database** in the palette changes between them.
 
-Notion TUI caches pages locally for faster load times and offline access:
+### Cache
 
-- **Automatic Caching** - Pages are cached on first view
-- **Smart Refresh** - Use `r` to refresh from API when needed
-- **Offline Mode** - Browse cached pages without internet connection
-- **Cache Location** - Default: `~/.cache/notion-tui`
+Page content is cached under `~/.cache/notion-tui` for one hour. `r` on a page reloads from Notion and refreshes the cache. Page titles and properties are always fetched live, so the app needs a connection.
 
-Cache files are organized by page ID and include metadata for staleness detection.
+## Limitations
 
-### Multi-Database Support
-
-Manage multiple Notion databases in one session:
-
-1. **Configure Databases** - Add multiple databases in config file with names and icons
-2. **Switch Databases** - Press `Ctrl+D` to open database selector
-3. **Default Database** - Set `default_database` in config for startup default
-
-Each database maintains its own page list and search index.
-
-### Search Functionality
-
-Two search modes for finding pages quickly:
-
-**Sidebar Search (`/`):**
-- Fuzzy search in sidebar
-- Filters visible page list in real-time
-- Fast and non-intrusive
-
-**Dedicated Search View (`Ctrl+P` → Search):**
-- Full-screen search interface
-- Search across all pages in current database
-- Shows match highlights and previews
-
-### Edit Mode
-
-Full inline editing capabilities:
-
-- **Block Editing** - Edit text content of any block
-- **Save/Discard** - `Ctrl+S` to save, `Ctrl+R` to discard
-- **Validation** - Client-side validation before sending to API
-- **Error Handling** - Clear error messages for API failures
-
-**Supported Block Types:**
-- Paragraphs
-- Headings (H1, H2, H3)
-- Bulleted Lists
-- Numbered Lists
-- Quotes
-- Code Blocks
-
-### Rate Limiting
-
-Notion TUI respects Notion's API rate limits:
-
-- **Limit:** 3 requests per second
-- **Implementation:** Token bucket with 2.5 req/sec sustained, burst of 3
-- **Behavior:** Automatic queueing and retry on rate limit errors
+- Database properties are not shown or editable yet.
+- Pages can be created inside pages, not as database rows.
+- Images are shown as links.
+- Columns are shown one after another.
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - Git
 - (Optional) VHS for recording integration tests
 
@@ -282,7 +198,7 @@ cp .env.example .env
 # Edit .env with your Notion token
 
 # Build
-go build -o notion-tui main.go
+go build -o notion-tui .
 
 # Run
 ./notion-tui
@@ -394,7 +310,7 @@ notion-tui/
 
 ### "Invalid token" error
 
-- Verify your token starts with `secret_`
+- Verify the token was copied in full (current tokens start with `ntn_`)
 - Ensure the integration has access to your database
 - Check that you've shared the database with the integration
 
@@ -457,19 +373,17 @@ Special thanks to:
 
 - **Issues:** [GitHub Issues](https://github.com/Panandika/notion-tui/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/Panandika/notion-tui/discussions)
-- **Documentation:** See this README and [CLAUDE.md](CLAUDE.md) for development guidelines
+- **Documentation:** This README and [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Roadmap
 
-See [WAVE_2_4_PLAN.md](WAVE_2_4_PLAN.md) for current development plans and upcoming features.
+Planned next, roughly in order:
 
-**Upcoming Features:**
-- Database property editing
-- Page creation and deletion
-- Kanban board view
-- Offline-first sync
-- Plugin system
-- Custom themes
+- Show and edit page properties (status, select, date, checkbox)
+- Toggle to-dos and follow links to child pages from the page view
+- Archive pages
+- Filter page and database lists
+- Configurable key bindings
 
 ---
 

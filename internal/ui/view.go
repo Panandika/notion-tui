@@ -2,11 +2,82 @@ package ui
 
 import (
 	"fmt"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // RenderInitializing returns the loading screen text.
 func RenderInitializing() string {
 	return "Initializing...\n"
+}
+
+// helpSection is one titled group of key bindings on the help screen.
+type helpSection struct {
+	title string
+	keys  [][2]string // key, description
+}
+
+// helpSections lists every key the app responds to. Keep it in sync with
+// the key handling in model.go and the pages.
+var helpSections = []helpSection{
+	{"Everywhere", [][2]string{
+		{"?", "show this help"},
+		{"ctrl+p", "command palette"},
+		{"ctrl+b", "show or hide the sidebar"},
+		{"tab", "switch focus between sidebar and page"},
+		{"esc", "go back"},
+		{"q / ctrl+c", "quit"},
+	}},
+	{"Sidebar", [][2]string{
+		{"↑/k  ↓/j", "move"},
+		{"←/h  →/l", "collapse / expand"},
+		{"enter", "open page or database; expand a parent"},
+	}},
+	{"Page", [][2]string{
+		{"↑/k  ↓/j", "scroll"},
+		{"e", "edit the page in $VISUAL / $EDITOR"},
+		{"ctrl+n", "new page inside this page"},
+		{"r", "reload from Notion"},
+	}},
+	{"Search", [][2]string{
+		{"enter", "search, or open the selected result"},
+		{"↓ / ↑", "move between the search box and results"},
+		{"ctrl+t", "switch between workspace and database search"},
+	}},
+	{"Command palette", [][2]string{
+		{"↑/k  ↓/j", "move"},
+		{"/", "filter commands by name"},
+		{"enter", "run: search, switch database, refresh, new page, export, help"},
+	}},
+}
+
+// RenderHelp renders the full-screen key reference, centered in the terminal.
+func RenderHelp(width, height int) string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(darkTheme.Primary)
+	sectionStyle := lipgloss.NewStyle().Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(darkTheme.Primary).Width(14)
+	mutedStyle := lipgloss.NewStyle().Foreground(darkTheme.Muted)
+
+	lines := []string{titleStyle.Render("Keyboard shortcuts"), ""}
+	for _, section := range helpSections {
+		lines = append(lines, sectionStyle.Render(section.title))
+		for _, binding := range section.keys {
+			lines = append(lines, "  "+keyStyle.Render(binding[0])+binding[1])
+		}
+		lines = append(lines, "")
+	}
+	lines = append(lines, mutedStyle.Render("Press any key to close"))
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(darkTheme.Secondary).
+		Padding(1, 3).
+		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+
+	if width <= 0 || height <= 0 {
+		return box
+	}
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // RenderError formats error messages for display.
