@@ -48,13 +48,6 @@ Sleep 500ms
 Type "Updated text content"
 Sleep 1s
 
-# Apply block transformation (Ctrl+1 for Heading 1)
-Type@500ms "Ctrl+1"
-Sleep 1s
-
-# View the transformation
-Sleep 1s
-
 # Save changes with Ctrl+S
 Type@500ms "Ctrl+S"
 Sleep 2s

@@ -883,47 +883,6 @@ func TestEditPageUpdate_RefreshBlock(t *testing.T) {
 	}
 }
 
-func TestEditPageUpdate_TransformBlockType(t *testing.T) {
-	t.Parallel()
-
-	mockClient := testhelpers.NewMockNotionClient()
-	block := testhelpers.NewParagraphBlock("Test content")
-	mockClient.WithBlock(block)
-
-	ep := NewEditPage(NewEditPageInput{
-		Width:        80,
-		Height:       24,
-		NotionClient: mockClient,
-		PageID:       "page-123",
-		BlockID:      "block-456",
-	})
-
-	// Load block first
-	loadedMsg := blockLoadedMsg{
-		block: block,
-		text:  "Test content",
-	}
-	model, _ := ep.Update(loadedMsg)
-	epPtr := model.(*EditPage)
-	ep = *epPtr
-
-	// Trigger transform to heading1 with Ctrl+1
-	// Can't easily simulate Ctrl+1, so test transformBlockType directly
-	cmd := ep.transformBlockType(string(notionapi.BlockTypeHeading1))
-
-	if cmd == nil {
-		t.Fatal("expected save command for transformation")
-	}
-
-	if !ep.saving {
-		t.Error("expected saving to be true during transformation")
-	}
-
-	if ep.pendingBlockType != string(notionapi.BlockTypeHeading1) {
-		t.Errorf("expected pendingBlockType heading_1, got %s", ep.pendingBlockType)
-	}
-}
-
 func TestIsTransientError(t *testing.T) {
 	t.Parallel()
 

@@ -406,13 +406,14 @@ func (sp *SearchPage) View() string {
 
 	// Build results section
 	var resultsSection string
-	if sp.err != nil {
+	switch {
+	case sp.err != nil:
 		resultsSection = sp.styles.Error.Render(fmt.Sprintf("Error: %v", sp.err))
-	} else if len(sp.results) == 0 && sp.query != "" {
+	case len(sp.results) == 0 && sp.query != "":
 		resultsSection = sp.styles.NoResults.Render("No results found")
-	} else if len(sp.results) > 0 {
+	case len(sp.results) > 0:
 		resultsSection = sp.resultsList.View()
-	} else {
+	default:
 		resultsSection = sp.styles.NoResults.Render("Type to search across all pages")
 	}
 
@@ -584,7 +585,7 @@ func (sp *SearchPage) generateSnippet(text, query string) string {
 		snippet = "..." + snippet
 	}
 	if end < len(text) {
-		snippet = snippet + "..."
+		snippet += "..."
 	}
 
 	return snippet

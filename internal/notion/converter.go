@@ -78,6 +78,11 @@ func renderBlock(block notionapi.Block, listCtx *listState, depth int) (string, 
 
 	children := BlockChildren(block)
 	if len(children) == 0 || depth >= maxRenderDepth {
+		// The block has children that were not loaded (nested deeper than the
+		// fetch limit). Say so instead of silently dropping them.
+		if len(children) == 0 && hasUnloadedChildren(block) {
+			return joinNonEmpty(md, notLoadedNotice), nil
+		}
 		return md, nil
 	}
 
@@ -101,14 +106,56 @@ func renderBlock(block notionapi.Block, listCtx *listState, depth int) (string, 
 		if isListItem(firstRenderedType(children)) {
 			sep = "\n"
 		}
-		return md + sep + prefixLines(nested, "    "), nil
+		return md + sep + prefixLines(nested, listChildIndent(md)), nil
 
 	case notionapi.BlockTypeQuote, notionapi.BlockTypeCallout:
 		return md + "\n>\n" + prefixLines(nested, "> "), nil
 
+	case notionapi.BlockTypeToggle:
+		// Quote the toggle's content so it reads as belonging to the toggle
+		// and cannot merge with lists that follow it.
+		return md + "\n\n" + prefixLines(nested, "> "), nil
+
 	default:
 		return md + "\n\n" + nested, nil
 	}
+}
+
+// notLoadedNotice marks children that exist in Notion but were not fetched.
+const notLoadedNotice = "*… nested content not loaded*"
+
+// hasUnloadedChildren reports whether a block has children in Notion that
+// should have been attached. Child pages and databases are separate documents.
+func hasUnloadedChildren(block notionapi.Block) bool {
+	if !block.GetHasChildren() {
+		return false
+	}
+	switch block.GetType() {
+	case notionapi.BlockTypeChildPage, notionapi.BlockTypeChildDatabase:
+		return false
+	default:
+		return true
+	}
+}
+
+// joinNonEmpty joins two Markdown fragments with a blank line, skipping empties.
+func joinNonEmpty(first, second string) string {
+	if first == "" {
+		return second
+	}
+	return first + "\n\n" + second
+}
+
+// listChildIndent returns the indent that nests content under a list item.
+// Markdown needs the indent to reach the item's text, which moves right as
+// numbered markers get longer ("100. " is five columns).
+func listChildIndent(item string) string {
+	const minIndent = 4
+	marker := strings.IndexByte(item, ' ') + 1
+	if marker < minIndent {
+		marker = minIndent
+	}
+	return strings.Repeat(" ", marker)
 }
 
 // isListItem reports whether a block type renders as a Markdown list item.
@@ -148,6 +195,8 @@ func prefixLines(text, prefix string) string {
 }
 
 // convertBlock converts a single Notion block to Markdown.
+//
+//nolint:unparam // No converter fails today; the error keeps callers ready for ones that can.
 func convertBlock(block notionapi.Block, listCtx *listState) (string, error) {
 	if block == nil {
 		return "", nil
@@ -290,10 +339,17 @@ func convertTable(block *notionapi.TableBlock) string {
 		sb.WriteString("\n")
 	}
 
-	// Markdown tables need a header row, so the first row always acts as one.
-	writeRow(rows[0])
+	// Markdown tables need a header row. Without a header in Notion, emit an
+	// empty one so the first data row is not styled as a heading.
+	body := rows
+	if block.Table.HasColumnHeader {
+		writeRow(rows[0])
+		body = rows[1:]
+	} else {
+		writeRow(nil)
+	}
 	sb.WriteString("|" + strings.Repeat(" --- |", width) + "\n")
-	for _, cells := range rows[1:] {
+	for _, cells := range body {
 		writeRow(cells)
 	}
 	return strings.TrimRight(sb.String(), "\n")

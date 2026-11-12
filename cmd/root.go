@@ -27,7 +27,7 @@ Configuration can be provided via:
 - Default values (lowest priority)
 
 Example:
-  export NOTION_TOKEN="secret_xxx"
+  export NOTION_TUI_NOTION_TOKEN="ntn_xxx"
   export NOTION_TUI_DATABASE_ID="db_id"
   notion-tui`,
 	RunE: runTUI,

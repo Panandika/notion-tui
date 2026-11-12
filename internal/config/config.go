@@ -70,6 +70,8 @@ func Load() (*Config, error) {
 }
 
 // migrateLegacyConfig converts old single database config to new multi-database format.
+//
+//nolint:unparam // Returns an error so Load keeps one shape for every config step.
 func (c *Config) migrateLegacyConfig() error {
 	// If new format is already set, skip migration
 	if len(c.Databases) > 0 {
