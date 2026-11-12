@@ -56,34 +56,31 @@ type EditFinishedMsg struct {
 
 // EditPage wraps the BlockEditor component with save logic for managing block editing.
 type EditPage struct {
-	editor           components.BlockEditor
-	statusBar        components.StatusBar
-	errorView        *components.ErrorView
-	modal            *components.Modal
-	pageID           string
-	blockID          string
-	blockType        string
-	block            notionapi.Block // Block as loaded, used to preserve non-text fields on save
-	originalText     string
-	savedAny         bool // At least one save reached Notion in this session
-	loadFailed       bool // The current error came from loading, not saving
-	lastEditedTime   time.Time
-	loading          bool
-	saving           bool
-	saved            bool
-	err              error
-	width            int
-	height           int
-	notionClient     NotionClient
-	showModal        bool
-	showError        bool
-	retryAttempt     int
-	maxRetries       int
-	pendingBlockType string // For block type transformation requests
+	editor         components.BlockEditor
+	statusBar      components.StatusBar
+	errorView      *components.ErrorView
+	modal          *components.Modal
+	pageID         string
+	blockID        string
+	blockType      string
+	block          notionapi.Block // Block as loaded, used to preserve non-text fields on save
+	originalText   string
+	savedAny       bool // At least one save reached Notion in this session
+	loadFailed     bool // The current error came from loading, not saving
+	lastEditedTime time.Time
+	loading        bool
+	saving         bool
+	saved          bool
+	err            error
+	width          int
+	height         int
+	notionClient   NotionClient
+	showModal      bool
+	showError      bool
+	retryAttempt   int
+	maxRetries     int
+	exitAfterSave  bool // Leave the editor once the pending save succeeds
 }
-
-// quitAfterSave marks a pending "save, then leave the editor" request.
-const quitAfterSave = "quit_after_save"
 
 // NewEditPageInput contains parameters for creating a new EditPage.
 type NewEditPageInput struct {
@@ -131,7 +128,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.Value {
 			case "save":
 				// Save and mark that we should quit after save
-				ep.pendingBlockType = quitAfterSave // Use as a flag
+				ep.exitAfterSave = true
 				ep.saving = true
 				ep.saved = false
 				ep.retryAttempt = 0
@@ -297,7 +294,9 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 			}
 
-			// Max retries exceeded or non-transient error - show error view
+			// Max retries exceeded or non-transient error - show error view.
+			// A failed "save and exit" must not exit on some later save.
+			ep.exitAfterSave = false
 			ep.err = msg.err
 			ep.showError = true
 			ep.errorView = &components.ErrorView{}
@@ -329,17 +328,10 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ep.statusBar.SetSyncStatus(components.StatusSynced)
 		ep.statusBar.UpdateSyncSuccess()
 
-		// Check if we should quit after save (from modal "save and exit")
-		if ep.pendingBlockType == quitAfterSave {
+		// Leave the editor if this save came from the "save and exit" prompt
+		if ep.exitAfterSave {
+			ep.exitAfterSave = false
 			return ep, ep.finishCmd()
-		}
-
-		// If we have a pending block type transformation, apply it now
-		if ep.pendingBlockType != "" && ep.pendingBlockType != quitAfterSave {
-			ep.blockType = ep.pendingBlockType
-			ep.pendingBlockType = ""
-		} else if ep.pendingBlockType != quitAfterSave {
-			ep.pendingBlockType = ""
 		}
 
 		// Clear "Saved!" message after a moment
@@ -426,24 +418,6 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ep, ep.finishCmd()
 			}
 			return ep, nil
-
-		// Block type transformation shortcuts
-		case "ctrl+1":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeHeading1))
-		case "ctrl+2":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeHeading2))
-		case "ctrl+3":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeHeading3))
-		case "ctrl+p":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeParagraph))
-		case "ctrl+l":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeBulletedListItem))
-		case "ctrl+o":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeNumberedListItem))
-		case "ctrl+q":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeQuote))
-		case "ctrl+k":
-			return ep, ep.transformBlockType(string(notionapi.BlockTypeCode))
 		}
 	}
 
@@ -589,18 +563,12 @@ func (ep *EditPage) saveCmd() tea.Cmd {
 	lastEditedTime := ep.lastEditedTime
 	client := ep.notionClient
 
-	// Determine block type to save (use pending if transformation requested)
-	blockTypeToSave := currentType
-	if ep.pendingBlockType != "" && ep.pendingBlockType != quitAfterSave {
-		blockTypeToSave = ep.pendingBlockType
-	}
-
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		// Saving rewrites the block as plain text, which drops rich text
 		// formatting. Skip the write when nothing changed to avoid that.
-		if newText == originalText && blockTypeToSave == currentType {
+		if newText == originalText {
 			return blockSavedMsg{
 				success:        true,
 				text:           newText,
@@ -610,7 +578,7 @@ func (ep *EditPage) saveCmd() tea.Cmd {
 		}
 
 		// Build update request based on block type
-		req := buildBlockUpdateRequest(blockTypeToSave, newText)
+		req := buildBlockUpdateRequest(currentType, newText)
 		preserveBlockFields(req, original)
 
 		updatedBlock, err := client.UpdateBlock(ctx, blockID, req)
@@ -633,25 +601,6 @@ func (ep *EditPage) saveCmd() tea.Cmd {
 			retryAttempt:   retryAttempt,
 		}
 	}
-}
-
-// transformBlockType initiates a block type transformation.
-func (ep *EditPage) transformBlockType(newBlockType string) tea.Cmd {
-	if ep.loading || ep.saving || ep.showModal || ep.showError {
-		return nil
-	}
-
-	// Mark the new block type as pending
-	ep.pendingBlockType = newBlockType
-
-	// Trigger save with the new block type
-	ep.saving = true
-	ep.saved = false
-	ep.retryAttempt = 0
-	ep.statusBar.SetMode(fmt.Sprintf("Converting to %s...", newBlockType))
-	ep.statusBar.SetSyncStatus(components.StatusSyncing)
-
-	return ep.saveCmd()
 }
 
 // isTransientError determines if an error is transient and should be retried.

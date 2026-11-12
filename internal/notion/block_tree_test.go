@@ -3,12 +3,23 @@ package notion
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jomei/notionapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// numberedPrefix returns the Markdown for n numbered items with text "x".
+func numberedPrefix(n int) string {
+	var sb strings.Builder
+	for i := 1; i <= n; i++ {
+		sb.WriteString(strconv.Itoa(i) + ". x\n")
+	}
+	return sb.String()
+}
 
 func txt(s string) []notionapi.RichText {
 	return []notionapi.RichText{{PlainText: s}}
@@ -144,7 +155,7 @@ func TestConvertNestedBlocks(t *testing.T) {
 				BasicBlock: basicBlock("t", notionapi.BlockTypeToggle, true),
 				Toggle:     notionapi.Toggle{RichText: txt("Details"), Children: notionapi.Blocks{para("p", "hidden text")}},
 			}},
-			expected: "▸ Details\n\nhidden text",
+			expected: "▸ Details\n\n> hidden text",
 		},
 		{
 			name: "column list flattens columns in order",
@@ -182,12 +193,67 @@ func TestConvertNestedBlocks(t *testing.T) {
 			name: "table renders rows with header separator",
 			blocks: []notionapi.Block{&notionapi.TableBlock{
 				BasicBlock: basicBlock("tb", notionapi.BlockTypeTableBlock, true),
-				Table: notionapi.Table{TableWidth: 2, Children: notionapi.Blocks{
+				Table: notionapi.Table{TableWidth: 2, HasColumnHeader: true, Children: notionapi.Blocks{
 					&notionapi.TableRowBlock{TableRow: notionapi.TableRow{Cells: [][]notionapi.RichText{txt("Name"), txt("Qty")}}},
 					&notionapi.TableRowBlock{TableRow: notionapi.TableRow{Cells: [][]notionapi.RichText{txt("a|b"), txt("2")}}},
 				}},
 			}},
 			expected: "| Name | Qty |\n| --- | --- |\n| a\\|b | 2 |",
+		},
+		{
+			name: "table without header gets an empty header row",
+			blocks: []notionapi.Block{&notionapi.TableBlock{
+				BasicBlock: basicBlock("tb2", notionapi.BlockTypeTableBlock, true),
+				Table: notionapi.Table{TableWidth: 2, Children: notionapi.Blocks{
+					&notionapi.TableRowBlock{TableRow: notionapi.TableRow{Cells: [][]notionapi.RichText{txt("a"), txt("1")}}},
+				}},
+			}},
+			expected: "|  |  |\n| --- | --- |\n| a | 1 |",
+		},
+		{
+			name: "toggle content cannot merge with a following list",
+			blocks: []notionapi.Block{
+				&notionapi.ToggleBlock{
+					BasicBlock: basicBlock("t2", notionapi.BlockTypeToggle, true),
+					Toggle:     notionapi.Toggle{RichText: txt("T"), Children: notionapi.Blocks{bullet("in", "inner")}},
+				},
+				bullet("out", "outer"),
+			},
+			expected: "▸ T\n\n> - inner\n\n- outer",
+		},
+		{
+			name: "children that were not loaded are announced",
+			blocks: []notionapi.Block{&notionapi.ToggleBlock{
+				BasicBlock: basicBlock("deep", notionapi.BlockTypeToggle, true),
+				Toggle:     notionapi.Toggle{RichText: txt("Deep")},
+			}},
+			expected: "▸ Deep\n\n*… nested content not loaded*",
+		},
+		{
+			name: "child page with children flag shows no notice",
+			blocks: []notionapi.Block{func() notionapi.Block {
+				b := &notionapi.ChildPageBlock{BasicBlock: basicBlock("cp2", notionapi.BlockTypeChildPage, true)}
+				b.ChildPage.Title = "Sub"
+				return b
+			}()},
+			expected: "📄 **Sub**",
+		},
+		{
+			name: "children of a three digit numbered item stay nested",
+			blocks: func() []notionapi.Block {
+				var items []notionapi.Block
+				for i := 0; i < 99; i++ {
+					items = append(items, &notionapi.NumberedListItemBlock{
+						BasicBlock:       basicBlock("n", notionapi.BlockTypeNumberedListItem, false),
+						NumberedListItem: notionapi.ListItem{RichText: txt("x")},
+					})
+				}
+				return append(items, &notionapi.NumberedListItemBlock{
+					BasicBlock:       basicBlock("n100", notionapi.BlockTypeNumberedListItem, true),
+					NumberedListItem: notionapi.ListItem{RichText: txt("last"), Children: notionapi.Blocks{bullet("c", "child")}},
+				})
+			}(),
+			expected: numberedPrefix(99) + "100. last\n     - child",
 		},
 		{
 			name: "child page and database show their titles",

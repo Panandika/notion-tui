@@ -665,12 +665,10 @@ func (m *AppModel) finishEdit(msg pages.EditFinishedMsg) tea.Cmd {
 }
 
 // goBack navigates to the previous page in history.
-func (m *AppModel) goBack() tea.Cmd {
+func (m *AppModel) goBack() {
 	if previousPage, ok := m.navigator.Back(); ok {
 		m.currentPage = previousPage
-		return nil
 	}
-	return nil
 }
 
 // createPage creates a new page instance for the given page ID.

@@ -8,7 +8,7 @@ Browse, view, edit, and manage your Notion databases and pages without leaving t
 
 - **Browse Pages** - Navigate your Notion databases with intuitive keyboard controls
 - **View Content** - Render Notion pages with markdown formatting and syntax highlighting
-- **Edit Pages** - Full inline editing with block type transformations
+- **Edit Pages** - Edit the text of a block from the terminal
 - **Search** - Fast fuzzy search across pages in sidebar and dedicated search view
 - **Multi-Database Support** - Switch between multiple Notion databases seamlessly
 - **Offline Caching** - Local file cache for faster load times and offline access
@@ -144,18 +144,6 @@ notion-tui --token "secret_xxx" --database-id "db-id"
 | `Ctrl+R` | Discard changes and refresh |
 | `Esc` | Cancel editing |
 
-**Block Type Transformations:**
-| Key | Action |
-|-----|--------|
-| `Ctrl+1` | Convert to Heading 1 |
-| `Ctrl+2` | Convert to Heading 2 |
-| `Ctrl+3` | Convert to Heading 3 |
-| `Ctrl+P` | Convert to Paragraph |
-| `Ctrl+L` | Convert to Bulleted List |
-| `Ctrl+O` | Convert to Numbered List |
-| `Ctrl+Q` | Convert to Quote |
-| `Ctrl+K` | Convert to Code Block |
-
 #### Help
 | Key | Action |
 |-----|--------|
@@ -251,7 +239,6 @@ Two search modes for finding pages quickly:
 Full inline editing capabilities:
 
 - **Block Editing** - Edit text content of any block
-- **Type Transformations** - Convert blocks between types (paragraph, heading, list, etc.)
 - **Save/Discard** - `Ctrl+S` to save, `Ctrl+R` to discard
 - **Validation** - Client-side validation before sending to API
 - **Error Handling** - Clear error messages for API failures

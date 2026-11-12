@@ -161,7 +161,7 @@ func (ev *ErrorView) classifyError() {
 	case strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized"):
 		ev.errorType = ErrorTypeAuth
 		ev.message = "Invalid Notion token"
-		ev.context = "Please check your NOTION_TOKEN in the config."
+		ev.context = "Please check your token (NOTION_TUI_NOTION_TOKEN or notion_token in the config)."
 		ev.actions = []ErrorAction{ActionGoBack}
 
 	case strings.Contains(errStr, "404") || strings.Contains(errStr, "not found"):

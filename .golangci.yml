@@ -15,7 +15,14 @@ linters:
     - gosec
     - misspell
     - unconvert
+    - gocritic
+    - unparam
   settings:
+    gocritic:
+      disabled-checks:
+        # Bubble Tea Update methods switch on the message type and usually
+        # start with one case; rewriting them as "if" fights the idiom.
+        - singleCaseSwitch
     gosec:
       excludes:
         - G304 # Cache file paths are built from the configured cache directory
@@ -27,6 +34,7 @@ linters:
         linters:
           - errcheck
           - gosec
+          - unparam
 
 formatters:
   enable:
