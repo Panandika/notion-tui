@@ -24,6 +24,8 @@ type blockLoadedMsg struct {
 // blockSavedMsg is sent when a block has been saved to the API.
 type blockSavedMsg struct {
 	success        bool
+	text           string // Text that this save wrote (or confirmed unchanged)
+	written        bool   // False when nothing changed and the API call was skipped
 	lastEditedTime time.Time
 	err            error
 	retryAttempt   int
@@ -45,6 +47,13 @@ type retryDelayMsg struct {
 // clearSavedIndicatorMsg is sent to clear the "Saved!" indicator.
 type clearSavedIndicatorMsg struct{}
 
+// EditFinishedMsg is emitted when the user leaves the editor.
+// Saved is true when at least one change was written to Notion.
+type EditFinishedMsg struct {
+	PageID string
+	Saved  bool
+}
+
 // EditPage wraps the BlockEditor component with save logic for managing block editing.
 type EditPage struct {
 	editor           components.BlockEditor
@@ -54,7 +63,10 @@ type EditPage struct {
 	pageID           string
 	blockID          string
 	blockType        string
+	block            notionapi.Block // Block as loaded, used to preserve non-text fields on save
 	originalText     string
+	savedAny         bool // At least one save reached Notion in this session
+	loadFailed       bool // The current error came from loading, not saving
 	lastEditedTime   time.Time
 	loading          bool
 	saving           bool
@@ -69,6 +81,9 @@ type EditPage struct {
 	maxRetries       int
 	pendingBlockType string // For block type transformation requests
 }
+
+// quitAfterSave marks a pending "save, then leave the editor" request.
+const quitAfterSave = "quit_after_save"
 
 // NewEditPageInput contains parameters for creating a new EditPage.
 type NewEditPageInput struct {
@@ -116,7 +131,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.Value {
 			case "save":
 				// Save and mark that we should quit after save
-				ep.pendingBlockType = "quit_after_save" // Use as a flag
+				ep.pendingBlockType = quitAfterSave // Use as a flag
 				ep.saving = true
 				ep.saved = false
 				ep.retryAttempt = 0
@@ -125,7 +140,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ep, ep.saveCmd()
 			case "discard":
 				// Exit without saving
-				return ep, tea.Quit
+				return ep, ep.finishCmd()
 			case "cancel":
 				// Continue editing
 				return ep, nil
@@ -147,6 +162,15 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "r":
+				// A failed load is retried by loading again: there is nothing to save yet
+				if ep.loadFailed {
+					ep.showError = false
+					ep.errorView = nil
+					ep.err = nil
+					ep.loading = true
+					ep.statusBar.SetMode("Loading")
+					return ep, ep.loadBlockCmd()
+				}
 				// Retry save
 				if ep.errorView.IsRetryable() {
 					ep.showError = false
@@ -172,9 +196,9 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ep.width = msg.Width
 		ep.height = msg.Height
 		ep.statusBar.SetWidth(msg.Width)
-		if !ep.loading {
-			editorHeight := msg.Height - lipgloss.Height(ep.statusBar.View()) - 4
-			ep.editor.SetSize(msg.Width-4, editorHeight)
+		// After a failed load there is no editor yet; resizing the zero value panics.
+		if ep.editorReady() {
+			ep.editor.SetSize(ep.editorSize())
 		}
 		if ep.modal != nil {
 			ep.modal.SetSize(msg.Width, msg.Height)
@@ -187,6 +211,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case blockLoadedMsg:
 		if msg.err != nil {
 			ep.loading = false
+			ep.loadFailed = true
 			ep.err = msg.err
 			ep.showError = true
 			ep.errorView = &components.ErrorView{}
@@ -200,17 +225,19 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		ep.loading = false
+		ep.loadFailed = false
+		ep.block = msg.block
 		ep.blockType = string(msg.block.GetType())
 		ep.originalText = msg.text
 		ep.lastEditedTime = msg.lastEditedTime
 
 		// Create editor with loaded content
-		editorHeight := ep.height - lipgloss.Height(ep.statusBar.View()) - 4
+		editorWidth, editorHeight := ep.editorSize()
 		ep.editor = components.NewBlockEditor(components.NewBlockEditorInput{
 			BlockID:   ep.blockID,
 			BlockType: ep.blockType,
 			Content:   msg.text,
-			Width:     ep.width - 4,
+			Width:     editorWidth,
 			Height:    editorHeight,
 		})
 
@@ -233,6 +260,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Update with fresh content (discards local changes)
+		ep.block = msg.block
 		ep.blockType = string(msg.block.GetType())
 		ep.originalText = msg.text
 		ep.lastEditedTime = msg.lastEditedTime
@@ -286,24 +314,31 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Save successful
 		ep.saved = true
+		if msg.written {
+			ep.savedAny = true
+		}
 		ep.retryAttempt = 0
 		ep.lastEditedTime = msg.lastEditedTime
-		ep.originalText = ep.editor.GetText()
-		ep.editor.MarkClean()
+		// Only the text this save wrote is saved. Anything typed while the
+		// request was in flight stays dirty and is written by the next save.
+		ep.originalText = msg.text
+		if ep.editor.GetText() == msg.text {
+			ep.editor.MarkClean()
+		}
 		ep.statusBar.SetMode("Saved!")
 		ep.statusBar.SetSyncStatus(components.StatusSynced)
 		ep.statusBar.UpdateSyncSuccess()
 
 		// Check if we should quit after save (from modal "save and exit")
-		if ep.pendingBlockType == "quit_after_save" {
-			return ep, tea.Quit
+		if ep.pendingBlockType == quitAfterSave {
+			return ep, ep.finishCmd()
 		}
 
 		// If we have a pending block type transformation, apply it now
-		if ep.pendingBlockType != "" && ep.pendingBlockType != "quit_after_save" {
+		if ep.pendingBlockType != "" && ep.pendingBlockType != quitAfterSave {
 			ep.blockType = ep.pendingBlockType
 			ep.pendingBlockType = ""
-		} else if ep.pendingBlockType != "quit_after_save" {
+		} else if ep.pendingBlockType != quitAfterSave {
 			ep.pendingBlockType = ""
 		}
 
@@ -345,7 +380,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ep.modal = &modal
 			return ep, nil
 		}
-		return ep, tea.Quit
+		return ep, ep.finishCmd()
 
 	case tea.KeyMsg:
 		// Handle keys at page level before delegating to editor
@@ -388,7 +423,7 @@ func (ep *EditPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ep.modal = &modal
 				return ep, nil
 			} else if !ep.showModal && !ep.showError {
-				return ep, tea.Quit
+				return ep, ep.finishCmd()
 			}
 			return ep, nil
 
@@ -543,22 +578,42 @@ func (ep *EditPage) refreshBlockCmd() tea.Cmd {
 
 // saveCmd returns a command that saves the editor content to the API.
 func (ep *EditPage) saveCmd() tea.Cmd {
+	// Snapshot everything the request needs now. The command runs on another
+	// goroutine while Update keeps mutating the page as the user types.
 	retryAttempt := ep.retryAttempt
+	newText := ep.editor.GetText()
+	originalText := ep.originalText
+	currentType := ep.blockType
+	original := ep.block
+	blockID := ep.blockID
+	lastEditedTime := ep.lastEditedTime
+	client := ep.notionClient
+
+	// Determine block type to save (use pending if transformation requested)
+	blockTypeToSave := currentType
+	if ep.pendingBlockType != "" && ep.pendingBlockType != quitAfterSave {
+		blockTypeToSave = ep.pendingBlockType
+	}
+
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		newText := ep.editor.GetText()
-
-		// Determine block type to save (use pending if transformation requested)
-		blockTypeToSave := ep.blockType
-		if ep.pendingBlockType != "" {
-			blockTypeToSave = ep.pendingBlockType
+		// Saving rewrites the block as plain text, which drops rich text
+		// formatting. Skip the write when nothing changed to avoid that.
+		if newText == originalText && blockTypeToSave == currentType {
+			return blockSavedMsg{
+				success:        true,
+				text:           newText,
+				lastEditedTime: lastEditedTime,
+				retryAttempt:   retryAttempt,
+			}
 		}
 
 		// Build update request based on block type
 		req := buildBlockUpdateRequest(blockTypeToSave, newText)
+		preserveBlockFields(req, original)
 
-		updatedBlock, err := ep.notionClient.UpdateBlock(ctx, ep.blockID, req)
+		updatedBlock, err := client.UpdateBlock(ctx, blockID, req)
 		if err != nil {
 			return blockSavedMsg{
 				success:      false,
@@ -572,6 +627,8 @@ func (ep *EditPage) saveCmd() tea.Cmd {
 
 		return blockSavedMsg{
 			success:        true,
+			written:        true,
+			text:           newText,
 			lastEditedTime: lastEdited,
 			retryAttempt:   retryAttempt,
 		}
@@ -684,47 +741,47 @@ func extractLastEditedTime(block notionapi.Block) time.Time {
 	switch b := block.(type) {
 	case *notionapi.ParagraphBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.Heading1Block:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.Heading2Block:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.Heading3Block:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.BulletedListItemBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.NumberedListItemBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.ToDoBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.ToggleBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.CodeBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.QuoteBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	case *notionapi.CalloutBlock:
 		if b.LastEditedTime != nil {
-			return time.Time(*b.LastEditedTime)
+			return *b.LastEditedTime
 		}
 	}
 	return time.Now()
@@ -805,4 +862,58 @@ func buildBlockUpdateRequest(blockType, text string) *notionapi.BlockUpdateReque
 	}
 
 	return req
+}
+
+// Space the editor chrome takes around the text area: a bordered, padded
+// container plus a header line, a help line and the page status bar.
+const (
+	editorFrameWidth  = 6 // Border (2) + horizontal padding (4)
+	editorFrameHeight = 7 // Border (2) + vertical padding (2) + header + help + status bar
+)
+
+// editorSize returns the text area size that makes the editor fit the page.
+func (ep *EditPage) editorSize() (width, height int) {
+	width = ep.width - editorFrameWidth
+	if width < 10 {
+		width = 10
+	}
+	height = ep.height - editorFrameHeight
+	if height < 1 {
+		height = 1
+	}
+	return width, height
+}
+
+// editorReady reports whether a block was loaded into the editor.
+func (ep *EditPage) editorReady() bool {
+	return !ep.loading && ep.editor.BlockID() != ""
+}
+
+// CapturesInput reports that the editor needs every key press.
+func (ep *EditPage) CapturesInput() bool {
+	return true
+}
+
+// finishCmd tells the root model that editing is over.
+func (ep *EditPage) finishCmd() tea.Cmd {
+	done := EditFinishedMsg{PageID: ep.pageID, Saved: ep.savedAny}
+	return func() tea.Msg { return done }
+}
+
+// preserveBlockFields copies fields the text editor does not manage from the
+// loaded block into the update request, so saving text does not reset them.
+func preserveBlockFields(req *notionapi.BlockUpdateRequest, original notionapi.Block) {
+	if req == nil || original == nil {
+		return
+	}
+	switch b := original.(type) {
+	case *notionapi.ToDoBlock:
+		if req.ToDo != nil {
+			req.ToDo.Checked = b.ToDo.Checked
+		}
+	case *notionapi.CodeBlock:
+		if req.Code != nil && b.Code.Language != "" {
+			req.Code.Language = b.Code.Language
+		}
+	}
 }

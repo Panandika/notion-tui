@@ -3,8 +3,9 @@ package pages
 import (
 	"context"
 
-	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/jomei/notionapi"
+
+	"github.com/Panandika/notion-tui/internal/notion"
 )
 
 // NotionClient defines the interface for Notion API operations needed by pages.

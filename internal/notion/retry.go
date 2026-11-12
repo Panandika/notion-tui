@@ -119,8 +119,9 @@ func shouldRetryError(err error) (shouldRetry bool, retryAfter time.Duration) {
 	// Check for network errors
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		// Retry on temporary network errors
-		if netErr.Temporary() || netErr.Timeout() {
+		// Retry on network timeouts. Other network errors fall through to
+		// the default below, which also retries.
+		if netErr.Timeout() {
 			return true, 0
 		}
 	}

@@ -7,52 +7,13 @@ import (
 	"github.com/jomei/notionapi"
 )
 
-// ConvertBlocksToMarkdown converts a slice of Notion blocks to Markdown string.
+// maxRenderDepth guards against runaway recursion on malformed block trees.
+const maxRenderDepth = 8
+
+// ConvertBlocksToMarkdown converts a slice of Notion blocks to a Markdown string.
+// Nested children attached to blocks (see SetBlockChildren) are rendered too.
 func ConvertBlocksToMarkdown(blocks []notionapi.Block) (string, error) {
-	if len(blocks) == 0 {
-		return "", nil
-	}
-
-	var result strings.Builder
-	var listContext *listState = nil
-
-	for i, block := range blocks {
-		if block == nil {
-			continue
-		}
-
-		// Handle list numbering context
-		blockType := block.GetType()
-		if blockType == notionapi.BlockTypeNumberedListItem {
-			if listContext == nil {
-				listContext = &listState{counter: 1}
-			}
-		} else if listContext != nil && blockType != notionapi.BlockTypeNumberedListItem {
-			listContext = nil
-		}
-
-		md, err := convertBlock(block, listContext)
-		if err != nil {
-			return "", fmt.Errorf("convert block %d: %w", i, err)
-		}
-
-		if md != "" {
-			result.WriteString(md)
-			result.WriteString("\n")
-
-			// Add extra newline after certain block types for better readability
-			if shouldAddExtraNewline(blockType) {
-				result.WriteString("\n")
-			}
-		}
-
-		// Increment counter for numbered lists
-		if listContext != nil && blockType == notionapi.BlockTypeNumberedListItem {
-			listContext.counter++
-		}
-	}
-
-	return strings.TrimRight(result.String(), "\n"), nil
+	return renderBlocks(blocks, 0)
 }
 
 // listState tracks the state for numbered list items.
@@ -60,22 +21,130 @@ type listState struct {
 	counter int
 }
 
-// shouldAddExtraNewline determines if an extra newline should be added after a block.
-func shouldAddExtraNewline(blockType notionapi.BlockType) bool {
+// renderBlocks renders sibling blocks, separating them so that Markdown keeps
+// them apart: list items stay tight, everything else gets a blank line.
+func renderBlocks(blocks []notionapi.Block, depth int) (string, error) {
+	var result strings.Builder
+	var prevType notionapi.BlockType
+	wrote := false
+	counter := 0
+
+	for i, block := range blocks {
+		if block == nil {
+			continue
+		}
+
+		blockType := block.GetType()
+		if blockType == notionapi.BlockTypeNumberedListItem {
+			counter++
+		} else {
+			counter = 0
+		}
+
+		md, err := renderBlock(block, &listState{counter: counter}, depth)
+		if err != nil {
+			return "", fmt.Errorf("convert block %d: %w", i, err)
+		}
+		if md == "" {
+			continue
+		}
+
+		if wrote {
+			if isListItem(prevType) && isListItem(blockType) {
+				result.WriteString("\n")
+			} else {
+				result.WriteString("\n\n")
+			}
+		}
+		result.WriteString(md)
+		prevType = blockType
+		wrote = true
+	}
+
+	return result.String(), nil
+}
+
+// renderBlock renders one block followed by its nested children, if any.
+func renderBlock(block notionapi.Block, listCtx *listState, depth int) (string, error) {
+	md, err := convertBlock(block, listCtx)
+	if err != nil {
+		return "", err
+	}
+
+	// Tables consume their own children (rows) in convertBlock.
+	if block.GetType() == notionapi.BlockTypeTableBlock {
+		return md, nil
+	}
+
+	children := BlockChildren(block)
+	if len(children) == 0 || depth >= maxRenderDepth {
+		return md, nil
+	}
+
+	nested, err := renderBlocks(children, depth+1)
+	if err != nil {
+		return "", err
+	}
+	if nested == "" {
+		return md, nil
+	}
+	if md == "" {
+		// Pure containers: column lists, columns, synced blocks.
+		return nested, nil
+	}
+
+	switch block.GetType() {
+	case notionapi.BlockTypeBulletedListItem,
+		notionapi.BlockTypeNumberedListItem,
+		notionapi.BlockTypeToDo:
+		sep := "\n\n"
+		if isListItem(firstRenderedType(children)) {
+			sep = "\n"
+		}
+		return md + sep + prefixLines(nested, "    "), nil
+
+	case notionapi.BlockTypeQuote, notionapi.BlockTypeCallout:
+		return md + "\n>\n" + prefixLines(nested, "> "), nil
+
+	default:
+		return md + "\n\n" + nested, nil
+	}
+}
+
+// isListItem reports whether a block type renders as a Markdown list item.
+func isListItem(blockType notionapi.BlockType) bool {
 	switch blockType {
-	case notionapi.BlockTypeParagraph,
-		notionapi.BlockTypeHeading1,
-		notionapi.BlockTypeHeading2,
-		notionapi.BlockTypeHeading3,
-		notionapi.BlockTypeCode,
-		notionapi.BlockTypeQuote,
-		notionapi.BlockTypeDivider,
-		notionapi.BlockTypeImage,
-		notionapi.BlockTypeCallout:
+	case notionapi.BlockTypeBulletedListItem,
+		notionapi.BlockTypeNumberedListItem,
+		notionapi.BlockTypeToDo:
 		return true
 	default:
 		return false
 	}
+}
+
+// firstRenderedType returns the type of the first non-nil block.
+func firstRenderedType(blocks []notionapi.Block) notionapi.BlockType {
+	for _, block := range blocks {
+		if block != nil {
+			return block.GetType()
+		}
+	}
+	return ""
+}
+
+// prefixLines prepends prefix to every non-empty line of text.
+// Empty lines get the prefix without trailing whitespace.
+func prefixLines(text, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line == "" {
+			lines[i] = strings.TrimRight(prefix, " ")
+			continue
+		}
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // convertBlock converts a single Notion block to Markdown.
@@ -127,11 +196,146 @@ func convertBlock(block notionapi.Block, listCtx *listState) (string, error) {
 	case *notionapi.CalloutBlock:
 		return convertCallout(b), nil
 
+	case *notionapi.ToggleBlock:
+		return "▸ " + convertRichText(b.Toggle.RichText), nil
+
+	case *notionapi.TableBlock:
+		return convertTable(b), nil
+
+	case *notionapi.ChildPageBlock:
+		return fmt.Sprintf("📄 **%s**", titleOrUntitled(b.ChildPage.Title)), nil
+
+	case *notionapi.ChildDatabaseBlock:
+		return fmt.Sprintf("🗂 **%s** (database)", titleOrUntitled(b.ChildDatabase.Title)), nil
+
+	case *notionapi.EquationBlock:
+		return FormatCode(b.Equation.Expression, "latex"), nil
+
+	case *notionapi.EmbedBlock:
+		return convertLink("Embed", b.Embed.Caption, b.Embed.URL), nil
+
+	case *notionapi.VideoBlock:
+		return convertLink("Video", b.Video.Caption, fileURL(b.Video.File, b.Video.External)), nil
+
+	case *notionapi.FileBlock:
+		return convertLink("File", b.File.Caption, fileURL(b.File.File, b.File.External)), nil
+
+	case *notionapi.PdfBlock:
+		return convertLink("PDF", b.Pdf.Caption, fileURL(b.Pdf.File, b.Pdf.External)), nil
+
+	case *notionapi.LinkPreviewBlock:
+		return convertLink("Link", nil, b.LinkPreview.URL), nil
+
+	case *notionapi.LinkToPageBlock:
+		return convertLinkToPage(b), nil
+
+	case *notionapi.UnsupportedBlock:
+		return "*[unsupported block]*", nil
+
 	default:
-		// Return empty string for unsupported block types
-		// This allows graceful handling without errors
+		// Containers (column lists, columns, synced blocks) have no text of
+		// their own; their children are rendered by renderBlock.
 		return "", nil
 	}
+}
+
+// titleOrUntitled returns a placeholder for empty titles, which would
+// otherwise leave bare emphasis markers in the output.
+func titleOrUntitled(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "Untitled"
+	}
+	return title
+}
+
+// convertTable converts a table block and its row children to a Markdown table.
+func convertTable(block *notionapi.TableBlock) string {
+	if block == nil {
+		return ""
+	}
+
+	var rows [][]string
+	width := block.Table.TableWidth
+	for _, child := range block.Table.Children {
+		row, ok := child.(*notionapi.TableRowBlock)
+		if !ok || row == nil {
+			continue
+		}
+		cells := make([]string, 0, len(row.TableRow.Cells))
+		for _, cell := range row.TableRow.Cells {
+			text := convertRichText(cell)
+			text = strings.ReplaceAll(text, "\n", " ")
+			text = strings.ReplaceAll(text, "|", "\\|")
+			cells = append(cells, text)
+		}
+		if len(cells) > width {
+			width = len(cells)
+		}
+		rows = append(rows, cells)
+	}
+	if len(rows) == 0 || width == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	writeRow := func(cells []string) {
+		sb.WriteString("|")
+		for i := 0; i < width; i++ {
+			cell := ""
+			if i < len(cells) {
+				cell = cells[i]
+			}
+			sb.WriteString(" " + cell + " |")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Markdown tables need a header row, so the first row always acts as one.
+	writeRow(rows[0])
+	sb.WriteString("|" + strings.Repeat(" --- |", width) + "\n")
+	for _, cells := range rows[1:] {
+		writeRow(cells)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// fileURL returns the URL of a Notion-hosted or external file object.
+func fileURL(file, external *notionapi.FileObject) string {
+	if file != nil && file.URL != "" {
+		return file.URL
+	}
+	if external != nil {
+		return external.URL
+	}
+	return ""
+}
+
+// convertLink renders a labelled Markdown link, preferring the caption as label.
+func convertLink(label string, caption []notionapi.RichText, url string) string {
+	if url == "" {
+		return ""
+	}
+	if text := GetRichTextString(caption); text != "" {
+		label = text
+	}
+	return fmt.Sprintf("[%s](%s)", label, url)
+}
+
+// convertLinkToPage renders a link_to_page block as a link to the Notion page.
+func convertLinkToPage(block *notionapi.LinkToPageBlock) string {
+	if block == nil {
+		return ""
+	}
+	id := string(block.LinkToPage.PageID)
+	label := "Linked page"
+	if id == "" {
+		id = string(block.LinkToPage.DatabaseID)
+		label = "Linked database"
+	}
+	if id == "" {
+		return ""
+	}
+	return fmt.Sprintf("[%s](https://www.notion.so/%s)", label, strings.ReplaceAll(id, "-", ""))
 }
 
 // convertRichText converts a slice of RichText to formatted Markdown.
@@ -228,7 +432,7 @@ func convertCode(block *notionapi.CodeBlock) string {
 		return ""
 	}
 	code := GetRichTextString(block.Code.RichText)
-	language := string(block.Code.Language)
+	language := block.Code.Language
 	return FormatCode(code, language)
 }
 

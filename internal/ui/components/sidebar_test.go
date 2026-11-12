@@ -300,7 +300,7 @@ func TestSidebarEnterSelect(t *testing.T) {
 
 	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 
-	sidebar, cmd := sidebar.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := sidebar.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	require.NotNil(t, cmd)
 

@@ -346,20 +346,11 @@ func TestDetailPageKeyHandling(t *testing.T) {
 	tests := []struct {
 		name           string
 		key            string
-		wantNavMsg     bool
-		navAction      string
 		wantBackNavMsg bool
 	}{
 		{
-			name:       "r key triggers refresh",
-			key:        "r",
-			wantNavMsg: false,
-		},
-		{
-			name:       "e key navigates to edit",
-			key:        "e",
-			wantNavMsg: true,
-			navAction:  "edit",
+			name: "r key triggers refresh",
+			key:  "r",
 		},
 		{
 			name:           "esc key navigates back",
@@ -392,14 +383,6 @@ func TestDetailPageKeyHandling(t *testing.T) {
 			}
 
 			_, cmd := dp.Update(keyMsg)
-
-			if tt.wantNavMsg {
-				require.NotNil(t, cmd)
-				msg := cmd()
-				navMsg, ok := msg.(navigationMsg)
-				require.True(t, ok)
-				assert.Equal(t, tt.navAction, navMsg.action)
-			}
 
 			if tt.wantBackNavMsg {
 				require.NotNil(t, cmd)
@@ -638,4 +621,114 @@ func mustCreateCache(t *testing.T) *cache.PageCache {
 	})
 	require.NoError(t, err)
 	return c
+}
+
+func newLoadedDetailPage(blocks []notionapi.Block) DetailPage {
+	dp := NewDetailPage(NewDetailPageInput{
+		Width:        80,
+		Height:       24,
+		Viewer:       newMockViewer(),
+		NotionClient: testhelpers.NewMockNotionClient(),
+		PageID:       "page-edit",
+	})
+	dp.loading = false
+	dp.blocks = blocks
+	return dp
+}
+
+func runeKey(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}
+
+func TestDetailPageBlockPicker_SelectsBlockToEdit(t *testing.T) {
+	t.Parallel()
+
+	first := testhelpers.NewParagraphBlock("first")
+	first.ID = "block-1"
+	divider := testhelpers.NewDividerBlock()
+	divider.ID = "block-divider"
+	second := testhelpers.NewHeading1Block("second")
+	second.ID = "block-2"
+	dp := newLoadedDetailPage([]notionapi.Block{first, divider, second})
+
+	_, cmd := dp.Update(runeKey('e'))
+	assert.Nil(t, cmd)
+	require.True(t, dp.CapturesInput())
+	// The divider has no text and must not be offered.
+	require.Len(t, dp.editable, 2)
+	assert.Contains(t, dp.View(), "Select a block to edit")
+
+	dp.Update(runeKey('j'))
+	_, cmd = dp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EditBlockMsg)
+	require.True(t, ok)
+	assert.Equal(t, "page-edit", msg.PageID)
+	assert.Equal(t, "block-2", msg.BlockID)
+	assert.False(t, dp.CapturesInput())
+}
+
+func TestDetailPageBlockPicker_EscCancelsWithoutLeavingPage(t *testing.T) {
+	t.Parallel()
+
+	block := testhelpers.NewParagraphBlock("text")
+	block.ID = "block-1"
+	dp := newLoadedDetailPage([]notionapi.Block{block})
+
+	dp.Update(runeKey('e'))
+	require.True(t, dp.CapturesInput())
+
+	_, cmd := dp.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	assert.Nil(t, cmd, "esc in the picker must not navigate back")
+	assert.False(t, dp.CapturesInput())
+}
+
+func TestDetailPageBlockPicker_NoEditableBlocks(t *testing.T) {
+	t.Parallel()
+
+	divider := testhelpers.NewDividerBlock()
+	divider.ID = "block-divider"
+	dp := newLoadedDetailPage([]notionapi.Block{divider})
+
+	_, cmd := dp.Update(runeKey('e'))
+
+	assert.Nil(t, cmd)
+	assert.False(t, dp.CapturesInput())
+}
+
+func TestDetailPageBlockPicker_IncludesNestedBlocks(t *testing.T) {
+	t.Parallel()
+
+	child := testhelpers.NewParagraphBlock("inside toggle")
+	child.ID = "child-1"
+	toggle := testhelpers.NewToggleBlock("toggle")
+	toggle.ID = "toggle-1"
+	toggle.Toggle.Children = notionapi.Blocks{child}
+	dp := newLoadedDetailPage([]notionapi.Block{toggle})
+
+	dp.Update(runeKey('e'))
+
+	require.Len(t, dp.editable, 2)
+	assert.Equal(t, "toggle-1", dp.editable[0].id)
+	assert.Equal(t, "child-1", dp.editable[1].id)
+}
+
+func TestDetailPage_IgnoresLoadResultForAnotherPage(t *testing.T) {
+	t.Parallel()
+
+	dp := newLoadedDetailPage(nil)
+	dp.loading = true
+	stale := testhelpers.NewParagraphBlock("from another page")
+
+	dp.Update(pageLoadedMsg{pageID: "some-other-page", blocks: []notionapi.Block{stale}})
+
+	assert.True(t, dp.loading, "a stale result must not end this page's load")
+	assert.Empty(t, dp.blocks)
+
+	dp.Update(pageLoadedMsg{pageID: "page-edit", blocks: []notionapi.Block{stale}})
+
+	assert.False(t, dp.loading)
+	assert.Len(t, dp.blocks, 1)
 }

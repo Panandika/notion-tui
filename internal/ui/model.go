@@ -175,8 +175,8 @@ func (m *AppModel) initializePages() {
 	// If databases are configured, create ListPage
 	if m.config.HasDatabases() {
 		listPage := pages.NewListPage(pages.NewListPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.config.GetDatabaseID(),
@@ -187,8 +187,8 @@ func (m *AppModel) initializePages() {
 	// If no databases, create workspace search page as initial view
 	if !m.config.HasDatabases() {
 		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   "",
@@ -199,8 +199,8 @@ func (m *AppModel) initializePages() {
 
 	// Create Dashboard page
 	dashboardPage := pages.NewDashboardPage(pages.NewDashboardPageInput{
-		Width:  m.width,
-		Height: m.height,
+		Width:  m.contentWidth(),
+		Height: m.contentHeight(),
 		Config: m.config,
 	})
 	m.pages[PageDashboard] = &dashboardPage
@@ -221,27 +221,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 		// Update component sizes
-		sidebarWidth := m.width / 4
-		if sidebarWidth < 20 {
-			sidebarWidth = 20
-		}
-		if sidebarWidth > 40 {
-			sidebarWidth = 40
-		}
-
-		m.treeView.SetSize(sidebarWidth, m.height-1)
+		m.treeView.SetSize(m.sidebarWidth(), m.height-1)
 		m.statusBar.SetWidth(m.width)
 
-		// Update all pages with window size
-		for pageID, page := range m.pages {
-			updatedPage, cmd := page.Update(msg)
-			m.pages[pageID] = updatedPage
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-
-		return m, tea.Batch(cmds...)
+		// Pages draw next to the sidebar, so they get the content area size
+		return m, m.resizePages()
 
 	case workspaceTreeMsg:
 		// Workspace tree data received
@@ -262,27 +246,64 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.navigateToDetail(msg.ID)
 
 	case tea.KeyMsg:
+		// Ctrl+C always quits, whatever has focus
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+
 		// Check if we're on the search page - it needs special key handling
 		isSearchPage := m.currentPage == PageWorkspaceSearch
+
+		// A page that captures input (text editor, block picker, focused
+		// search box) receives every other key itself.
+		capturing := m.pageCapturesInput()
 
 		// Handle mode-specific keys FIRST before global keys
 		switch msg.String() {
 		case "tab":
+			if capturing {
+				break
+			}
 			// Toggle focus between sidebar and main content
 			m.sidebarFocus = !m.sidebarFocus
 			m.treeView.SetFocused(m.sidebarFocus)
 			return m, nil
 
 		case "ctrl+b":
-			// Toggle sidebar visibility
+			// Toggle sidebar visibility; the content area changes width with it
 			m.showSidebar = !m.showSidebar
-			return m, nil
+			if !m.showSidebar {
+				m.sidebarFocus = false
+				m.treeView.SetFocused(false)
+			}
+			return m, m.resizePages()
 
 		case "ctrl+p":
-			// Toggle command palette (works everywhere)
+			// The palette navigates away, which would silently drop unsaved
+			// text, so it stays closed while the editor is open.
+			if m.currentPage == PageEdit {
+				return m, nil
+			}
+			// Toggle command palette (works everywhere else)
 			m.cmdPalette.Toggle()
 			m.showPalette = m.cmdPalette.IsOpen()
 			return m, nil
+		}
+
+		// If palette is open, only palette handles keys (except ctrl+p which is handled above).
+		// This runs before global keys so typing "q" in the palette filters instead of quitting.
+		if m.showPalette {
+			var cmd tea.Cmd
+			m.cmdPalette, cmd = m.cmdPalette.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		// A capturing page gets the key and nothing else does
+		if capturing {
+			return m, m.updateCurrentPage(msg)
 		}
 
 		// Handle global keys
@@ -293,14 +314,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// If palette is open, only palette handles keys (except ctrl+p which is handled above)
-		if m.showPalette {
+		// With the sidebar focused, keys drive the tree only. Sending them to
+		// the page as well would trigger page actions the user cannot see.
+		if m.showSidebar && m.sidebarFocus && msg.String() != "esc" {
 			var cmd tea.Cmd
-			m.cmdPalette, cmd = m.cmdPalette.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
+			m.treeView, cmd = m.treeView.Update(msg)
+			return m, cmd
 		}
 
 		// Handle other mode-specific keys
@@ -325,6 +344,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pages.NavigationMsg:
 		// Handle navigation to a new page
 		return m, m.navigateTo(PageID(msg.PageID()))
+
+	case components.ContentLoadedMsg, components.ErrorMsg:
+		// Rendered content belongs to the detail page's viewer. Deliver it
+		// there even if the user has already moved on to the editor.
+		if m.currentPage != PageDetail {
+			if page, ok := m.pages[PageDetail]; ok {
+				updatedPage, cmd := page.Update(msg)
+				m.pages[PageDetail] = updatedPage
+				return m, cmd
+			}
+		}
+
+	case pages.EditBlockMsg:
+		// User picked a block to edit on the detail page
+		return m, m.navigateToEdit(msg.PageID, msg.BlockID)
+
+	case pages.EditFinishedMsg:
+		// User left the editor: return to the page and reload it if it changed
+		return m, m.finishEdit(msg)
 
 	case components.CommandExecutedMsg:
 		// Command palette executed a command
@@ -358,16 +396,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Delegate to current page
-	if page, ok := m.pages[m.currentPage]; ok {
-		updatedPage, cmd := page.Update(msg)
-		m.pages[m.currentPage] = updatedPage
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+	if cmd := m.updateCurrentPage(msg); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
-	// Update tree view if sidebar is visible and focused
-	if m.showSidebar && m.sidebarFocus {
+	// Non-key messages still reach a focused tree view (key presses for the
+	// tree were handled above and never get here).
+	if _, isKey := msg.(tea.KeyMsg); !isKey && m.showSidebar && m.sidebarFocus {
 		var cmd tea.Cmd
 		m.treeView, cmd = m.treeView.Update(msg)
 		if cmd != nil {
@@ -415,7 +450,7 @@ func (m AppModel) View() string {
 		mainContent = LayoutSidebarMain(LayoutSidebarMainInput{
 			Sidebar:      sidebarView,
 			Main:         pageView,
-			SidebarWidth: m.width / 4,
+			SidebarWidth: m.sidebarWidth(),
 			TotalWidth:   m.width,
 			TotalHeight:  m.height - 1, // Reserve 1 line for status bar
 		})
@@ -443,6 +478,84 @@ func (m AppModel) View() string {
 	}
 
 	return finalView
+}
+
+// sidebarWidth returns the sidebar width: a quarter of the terminal, clamped.
+func (m *AppModel) sidebarWidth() int {
+	width := m.width / 4
+	if width < 20 {
+		width = 20
+	}
+	if width > 40 {
+		width = 40
+	}
+	return width
+}
+
+// contentWidth returns the width available to the current page.
+func (m *AppModel) contentWidth() int {
+	if !m.showSidebar {
+		return m.width
+	}
+	width := m.width - m.sidebarWidth() - 1 // -1 for the sidebar border
+	if width < 1 {
+		width = 1
+	}
+	return width
+}
+
+// contentHeight returns the height available to the current page.
+func (m *AppModel) contentHeight() int {
+	height := m.height - 1 // Reserve 1 line for the global status bar
+	if height < 1 {
+		height = 1
+	}
+	return height
+}
+
+// resizePages tells every page the current content area size.
+func (m *AppModel) resizePages() tea.Cmd {
+	if m.width <= 0 || m.height <= 0 {
+		return nil
+	}
+	size := tea.WindowSizeMsg{Width: m.contentWidth(), Height: m.contentHeight()}
+
+	var cmds []tea.Cmd
+	for pageID, page := range m.pages {
+		updatedPage, cmd := page.Update(size)
+		m.pages[pageID] = updatedPage
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// inputCapturer is implemented by pages that need raw key input,
+// such as a text editor or a focused search box.
+type inputCapturer interface {
+	CapturesInput() bool
+}
+
+// pageCapturesInput reports whether the current page wants every key press.
+// While the sidebar has focus the page is not the input target.
+func (m *AppModel) pageCapturesInput() bool {
+	if m.showSidebar && m.sidebarFocus {
+		return false
+	}
+	page, ok := m.pages[m.currentPage].(inputCapturer)
+	return ok && page.CapturesInput()
+}
+
+// updateCurrentPage forwards a message to the current page.
+func (m *AppModel) updateCurrentPage(msg tea.Msg) tea.Cmd {
+	page, ok := m.pages[m.currentPage]
+	if !ok {
+		return nil
+	}
+	updatedPage, cmd := page.Update(msg)
+	m.pages[m.currentPage] = updatedPage
+	return cmd
 }
 
 // handleGlobalKeys processes global keyboard shortcuts.
@@ -489,14 +602,14 @@ func (m *AppModel) navigateTo(pageID PageID) tea.Cmd {
 func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
 	// Create viewer for the detail page
 	viewer := components.NewPageViewer(components.NewPageViewerInput{
-		Width:  m.width,
-		Height: m.height - 2, // Reserve space for status bar
+		Width:  m.contentWidth(),
+		Height: m.contentHeight() - 1, // Reserve 1 line for the page status bar
 	})
 
 	// Create or update detail page
 	detailPage := pages.NewDetailPage(pages.NewDetailPageInput{
-		Width:        m.width,
-		Height:       m.height,
+		Width:        m.contentWidth(),
+		Height:       m.contentHeight(),
 		Viewer:       &viewer,
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
@@ -506,6 +619,49 @@ func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
 
 	// Navigate to detail page
 	return m.navigateTo(PageDetail)
+}
+
+// navigateToEdit opens the editor for one block of a Notion page.
+func (m *AppModel) navigateToEdit(notionPageID, blockID string) tea.Cmd {
+	editPage := pages.NewEditPage(pages.NewEditPageInput{
+		Width:        m.contentWidth(),
+		Height:       m.contentHeight(),
+		NotionClient: m.notionClient,
+		PageID:       notionPageID,
+		BlockID:      blockID,
+	})
+	m.pages[PageEdit] = &editPage
+
+	// The editor needs the keyboard, so take focus away from the sidebar
+	m.sidebarFocus = false
+	m.treeView.SetFocused(false)
+	m.mode = ViewModeEdit
+	m.statusBar.SetMode(components.ModeEdit)
+
+	return m.navigateTo(PageEdit)
+}
+
+// finishEdit leaves the editor and reloads the detail page if anything was saved.
+func (m *AppModel) finishEdit(msg pages.EditFinishedMsg) tea.Cmd {
+	m.mode = ViewModeBrowse
+	m.statusBar.SetMode(components.ModeBrowse)
+	delete(m.pages, PageEdit)
+
+	if m.currentPage == PageEdit {
+		previousPage, ok := m.navigator.Back()
+		if !ok {
+			previousPage = PageDashboard
+		}
+		m.currentPage = previousPage
+	}
+
+	if !msg.Saved {
+		return nil
+	}
+	if detail, ok := m.pages[PageDetail].(*pages.DetailPage); ok && detail.PageID() == msg.PageID {
+		return detail.Refresh()
+	}
+	return nil
 }
 
 // goBack navigates to the previous page in history.
@@ -522,8 +678,8 @@ func (m *AppModel) createPage(pageID PageID) {
 	switch pageID {
 	case PageList:
 		listPage := pages.NewListPage(pages.NewListPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.currentDBID,
@@ -534,12 +690,12 @@ func (m *AppModel) createPage(pageID PageID) {
 		// Detail page is created on-demand with specific page ID
 		// This case shouldn't be hit normally
 		viewer := components.NewPageViewer(components.NewPageViewerInput{
-			Width:  m.width,
-			Height: m.height - 2,
+			Width:  m.contentWidth(),
+			Height: m.contentHeight() - 1, // Reserve 1 line for the page status bar
 		})
 		detailPage := pages.NewDetailPage(pages.NewDetailPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			Viewer:       &viewer,
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
@@ -548,14 +704,13 @@ func (m *AppModel) createPage(pageID PageID) {
 		m.pages[pageID] = &detailPage
 
 	case PageEdit:
-		// Edit page is created on-demand with specific page ID
-		// This case shouldn't be hit normally
-		// TODO: Implement EditPage creation
+		// Edit page needs a page and block ID, so it is only created by
+		// navigateToEdit. Nothing to create here.
 
 	case PageSearch:
 		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.currentDBID,
@@ -565,8 +720,8 @@ func (m *AppModel) createPage(pageID PageID) {
 
 	case PageWorkspaceSearch:
 		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
-			Width:        m.width,
-			Height:       m.height,
+			Width:        m.contentWidth(),
+			Height:       m.contentHeight(),
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.currentDBID,
@@ -576,8 +731,8 @@ func (m *AppModel) createPage(pageID PageID) {
 
 	case PageDatabaseList:
 		dbListPage := pages.NewDatabaseListPage(pages.NewDatabaseListPageInput{
-			Width:       m.width,
-			Height:      m.height,
+			Width:       m.contentWidth(),
+			Height:      m.contentHeight(),
 			Databases:   m.config.Databases,
 			DefaultDBID: m.currentDBID,
 		})
@@ -585,8 +740,8 @@ func (m *AppModel) createPage(pageID PageID) {
 
 	case PageDashboard:
 		dashboardPage := pages.NewDashboardPage(pages.NewDashboardPageInput{
-			Width:  m.width,
-			Height: m.height,
+			Width:  m.contentWidth(),
+			Height: m.contentHeight(),
 			Config: m.config,
 		})
 		m.pages[pageID] = &dashboardPage
@@ -650,8 +805,8 @@ func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea
 func (m *AppModel) navigateToSearch() tea.Cmd {
 	// Create or update search page with workspace mode
 	searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
-		Width:        m.width,
-		Height:       m.height,
+		Width:        m.contentWidth(),
+		Height:       m.contentHeight(),
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		DatabaseID:   m.currentDBID,
@@ -667,8 +822,8 @@ func (m *AppModel) navigateToSearch() tea.Cmd {
 func (m *AppModel) navigateToDatabaseList() tea.Cmd {
 	// Create or update database list page
 	dbListPage := pages.NewDatabaseListPage(pages.NewDatabaseListPageInput{
-		Width:       m.width,
-		Height:      m.height,
+		Width:       m.contentWidth(),
+		Height:      m.contentHeight(),
 		Databases:   m.config.Databases,
 		DefaultDBID: m.currentDBID,
 	})
@@ -699,8 +854,8 @@ func (m *AppModel) switchDatabase(databaseID string) tea.Cmd {
 
 	// Recreate list page with new database
 	listPage := pages.NewListPage(pages.NewListPageInput{
-		Width:        m.width,
-		Height:       m.height,
+		Width:        m.contentWidth(),
+		Height:       m.contentHeight(),
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		DatabaseID:   databaseID,

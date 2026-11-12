@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jomei/notionapi"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Panandika/notion-tui/internal/testhelpers"
 	"github.com/Panandika/notion-tui/internal/ui/components"
@@ -290,6 +292,9 @@ func TestEditPageUpdate_SaveDraft(t *testing.T) {
 	epPtr := model.(*EditPage)
 	ep = *epPtr
 
+	// Change the text: unchanged content is not written to the API
+	ep.editor.SetText("Updated text")
+
 	// Now simulate save
 	saveMsg := components.SaveDraftMsg{
 		BlockID:   "block-456",
@@ -436,11 +441,11 @@ func TestEditPageUpdate_CancelEdit(t *testing.T) {
 
 	// Simulate cancel
 	msg := components.CancelEditMsg{BlockID: "block-456"}
-	model, cmd := ep.Update(msg)
+	_, cmd := ep.Update(msg)
 
-	// Should return quit command
+	// Should return the command that leaves the editor
 	if cmd == nil {
-		t.Error("expected quit command")
+		t.Error("expected finish command")
 	}
 }
 
@@ -534,10 +539,10 @@ func TestEditPageUpdate_Escape(t *testing.T) {
 
 	// Simulate Escape
 	msg := tea.KeyMsg{Type: tea.KeyEsc}
-	model, cmd := ep.Update(msg)
+	_, cmd := ep.Update(msg)
 
 	if cmd == nil {
-		t.Error("expected quit command")
+		t.Error("expected finish command")
 	}
 }
 
@@ -800,7 +805,8 @@ func TestEditPageIntegration_LoadEditSave(t *testing.T) {
 		t.Errorf("expected originalText 'Original text', got %s", ep.originalText)
 	}
 
-	// Step 2: Trigger save
+	// Step 2: Edit, then trigger save
+	ep.editor.SetText("Updated text")
 	saveMsg := components.SaveDraftMsg{
 		BlockID:   "block-456",
 		BlockType: string(notionapi.BlockTypeParagraph),
@@ -984,4 +990,177 @@ func TestCalculateRetryDelay(t *testing.T) {
 			}
 		})
 	}
+}
+
+func loadEditPage(t *testing.T, mockClient *testhelpers.MockNotionClient, block notionapi.Block, text string) *EditPage {
+	t.Helper()
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+	model, _ := ep.Update(blockLoadedMsg{block: block, text: text})
+	return model.(*EditPage)
+}
+
+func TestEditPageSave_UnchangedTextSkipsAPI(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	ep := loadEditPage(t, mockClient, testhelpers.NewParagraphBlock("Original text"), "Original text")
+
+	model, cmd := ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	require.NotNil(t, cmd)
+	model, _ = model.(*EditPage).Update(cmd())
+	ep = model.(*EditPage)
+
+	// Rewriting an unchanged block would strip its rich text formatting.
+	assert.Equal(t, 0, mockClient.UpdateBlockCallCount())
+	assert.False(t, ep.savedAny)
+}
+
+func TestEditPageSave_PreservesToDoCheckedState(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	ep := loadEditPage(t, mockClient, testhelpers.NewToDoBlock("Buy milk", true), "Buy milk")
+	ep.editor.SetText("Buy oat milk")
+
+	_, cmd := ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	require.NotNil(t, cmd)
+	cmd()
+
+	call := mockClient.LastUpdateBlockCall()
+	require.NotNil(t, call)
+	require.NotNil(t, call.Request.ToDo)
+	assert.True(t, call.Request.ToDo.Checked, "editing text must not uncheck the to-do")
+}
+
+func TestEditPageEsc_FinishesInsteadOfQuitting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		edit      bool
+		wantSaved bool
+	}{
+		{name: "clean exit reports nothing saved", edit: false, wantSaved: false},
+		{name: "exit after save reports saved", edit: true, wantSaved: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockClient := testhelpers.NewMockNotionClient()
+			ep := loadEditPage(t, mockClient, testhelpers.NewParagraphBlock("Original text"), "Original text")
+
+			if tt.edit {
+				ep.editor.SetText("Updated text")
+				model, cmd := ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+				require.NotNil(t, cmd)
+				model, _ = model.(*EditPage).Update(cmd())
+				ep = model.(*EditPage)
+			}
+
+			_, cmd := ep.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+			require.NotNil(t, cmd)
+			msg, ok := cmd().(EditFinishedMsg)
+			require.True(t, ok, "leaving the editor must not quit the app")
+			assert.Equal(t, "page-123", msg.PageID)
+			assert.Equal(t, tt.wantSaved, msg.Saved)
+		})
+	}
+}
+
+func TestEditPage_ResizeAfterFailedLoadDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: testhelpers.NewMockNotionClient(),
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+	model, _ := ep.Update(blockLoadedMsg{err: fmt.Errorf("not found")})
+
+	assert.NotPanics(t, func() {
+		model.(*EditPage).Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	})
+}
+
+func TestEditPage_RetryAfterFailedLoadReloadsBlock(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	ep := NewEditPage(NewEditPageInput{
+		Width:        80,
+		Height:       24,
+		NotionClient: mockClient,
+		PageID:       "page-123",
+		BlockID:      "block-456",
+	})
+	model, _ := ep.Update(blockLoadedMsg{err: fmt.Errorf("timeout")})
+
+	model, cmd := model.(*EditPage).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	require.NotNil(t, cmd)
+	_, isLoad := cmd().(blockLoadedMsg)
+	assert.True(t, isLoad, "retry after a failed load must load, not save")
+	assert.True(t, model.(*EditPage).loading)
+	assert.Equal(t, 0, mockClient.UpdateBlockCallCount())
+}
+
+func TestEditPageSave_TextTypedDuringSaveStaysUnsaved(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	ep := loadEditPage(t, mockClient, testhelpers.NewParagraphBlock("Original text"), "Original text")
+
+	// Save "abc", then keep typing before the request returns
+	ep.editor.SetText("abc")
+	model, saveCmd := ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	ep = model.(*EditPage)
+	require.NotNil(t, saveCmd)
+	model, _ = ep.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	ep = model.(*EditPage)
+	typed := ep.editor.GetText()
+	require.NotEqual(t, "abc", typed)
+
+	model, _ = ep.Update(saveCmd())
+	ep = model.(*EditPage)
+
+	call := mockClient.LastUpdateBlockCall()
+	require.NotNil(t, call)
+	assert.Equal(t, "abc", call.Request.Paragraph.RichText[0].Text.Content)
+	assert.Equal(t, "abc", ep.originalText, "only the written text counts as saved")
+	assert.True(t, ep.editor.IsDirty(), "text typed during the save is still unsaved")
+
+	// The next save must write the newer text instead of being skipped
+	_, saveCmd = ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	require.NotNil(t, saveCmd)
+	saveCmd()
+	assert.Equal(t, 2, mockClient.UpdateBlockCallCount())
+	assert.Equal(t, typed, mockClient.LastUpdateBlockCall().Request.Paragraph.RichText[0].Text.Content)
+}
+
+func TestEditPageSave_PreservesCodeLanguage(t *testing.T) {
+	t.Parallel()
+
+	mockClient := testhelpers.NewMockNotionClient()
+	ep := loadEditPage(t, mockClient, testhelpers.NewCodeBlock("go", "x := 1"), "x := 1")
+	ep.editor.SetText("x := 2")
+
+	_, cmd := ep.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	require.NotNil(t, cmd)
+	cmd()
+
+	call := mockClient.LastUpdateBlockCall()
+	require.NotNil(t, call)
+	require.NotNil(t, call.Request.Code)
+	assert.Equal(t, "go", call.Request.Code.Language)
 }

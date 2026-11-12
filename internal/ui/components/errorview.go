@@ -103,7 +103,6 @@ type ErrorView struct {
 	height     int
 	styles     ErrorViewStyles
 	showBorder bool
-	retryAfter int // seconds until retry (for rate limit)
 }
 
 // NewErrorViewInput contains parameters for creating a new ErrorView.
