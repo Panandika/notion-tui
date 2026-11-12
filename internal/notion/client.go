@@ -3,6 +3,8 @@ package notion
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jomei/notionapi"
@@ -38,14 +40,22 @@ type SearchResponse struct {
 type Client struct {
 	api     *notionapi.Client
 	limiter *rate.Limiter
+
+	// Used for endpoints the library does not cover (page Markdown).
+	token      string
+	httpClient *http.Client
+	baseURL    string
 }
 
 // NewClient creates a new rate-limited Notion API client.
 // Rate limit: 2.5 requests/second with burst of 3.
 func NewClient(token string) *Client {
 	return &Client{
-		api:     notionapi.NewClient(notionapi.Token(token), notionapi.WithRetry(5)),
-		limiter: rate.NewLimiter(rate.Limit(2.5), 3),
+		api:        notionapi.NewClient(notionapi.Token(token), notionapi.WithRetry(5)),
+		limiter:    rate.NewLimiter(rate.Limit(2.5), 3),
+		token:      token,
+		httpClient: &http.Client{Timeout: 60 * time.Second},
+		baseURL:    defaultBaseURL,
 	}
 }
 
@@ -248,6 +258,21 @@ func (c *Client) convertSearchResponse(resp *notionapi.SearchResponse) *SearchRe
 		HasMore:    resp.HasMore,
 		NextCursor: string(resp.NextCursor),
 	}
+}
+
+// PageTitle returns a page's full title, or "Untitled" when it has none.
+func PageTitle(page *notionapi.Page) string {
+	if page == nil {
+		return "Untitled"
+	}
+	for _, prop := range page.Properties {
+		if titleProp, ok := prop.(*notionapi.TitleProperty); ok {
+			if title := strings.TrimSpace(GetRichTextString(titleProp.Title)); title != "" {
+				return title
+			}
+		}
+	}
+	return "Untitled"
 }
 
 // extractPageTitle gets the title from a page's properties.

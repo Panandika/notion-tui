@@ -15,7 +15,7 @@ func HandleGlobalKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "ctrl+c", "q":
 		return true, tea.Quit
 	case "?":
-		// TODO: Show help overlay
+		// Handled: the root model shows the help screen
 		return true, nil
 	default:
 		return false, nil

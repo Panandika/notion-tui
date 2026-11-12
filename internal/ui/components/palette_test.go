@@ -24,7 +24,7 @@ func TestNewCommandPalette(t *testing.T) {
 			wantWidth:        60,
 			wantHeight:       15,
 			wantIsOpen:       false,
-			wantCommandCount: 6,
+			wantCommandCount: 7,
 		},
 	}
 
@@ -127,7 +127,7 @@ func TestAddCommand(t *testing.T) {
 			name:        "add single custom command",
 			commandName: "Custom Command",
 			commandDesc: "A custom command description",
-			wantCount:   7, // 6 built-in + 1 custom
+			wantCount:   8, // 7 built-in + 1 custom
 		},
 	}
 
@@ -163,8 +163,8 @@ func TestFuzzySearch(t *testing.T) {
 	}{
 		{
 			name:         "filter by command name",
-			commandNames: []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
-			wantFilters:  []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
+			commandNames: []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Help", "Quit"},
+			wantFilters:  []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Help", "Quit"},
 		},
 	}
 
@@ -304,8 +304,8 @@ func TestBuiltInCommands(t *testing.T) {
 	}{
 		{
 			name:            "default built-in commands",
-			wantNames:       []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Quit"},
-			wantDescPartial: []string{"Search", "Switch", "Refresh", "Create", "Export", "Exit"},
+			wantNames:       []string{"Search Workspace", "Switch Database", "Refresh Current View", "New Page", "Export Page", "Help", "Quit"},
+			wantDescPartial: []string{"Search", "Switch", "Refresh", "Create", "Export", "shortcuts", "Exit"},
 		},
 	}
 

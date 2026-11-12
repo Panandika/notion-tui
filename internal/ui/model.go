@@ -236,7 +236,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case pages.DetailResultMsg:
+		// Results of work the detail page started go to the detail page,
+		// whichever page is in front.
+		if page, ok := m.pages[PageDetail]; ok {
+			updatedPage, cmd := page.Update(msg)
+			m.pages[PageDetail] = updatedPage
+			return m, cmd
+		}
+		return m, nil
+
 	case components.TreeNavigationMsg:
+		if m.pageBusy() {
+			return m, nil
+		}
 		// User selected an item from the tree
 		if msg.ObjectType == "database" {
 			// Switch to this database
@@ -254,8 +267,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if we're on the search page - it needs special key handling
 		isSearchPage := m.currentPage == PageWorkspaceSearch
 
-		// A page that captures input (text editor, block picker, focused
-		// search box) receives every other key itself.
+		// The help screen covers everything; any key closes it
+		if m.showHelp {
+			m.showHelp = false
+			return m, nil
+		}
+
+		// A page that captures input (a focused search box) receives every
+		// other key itself.
 		capturing := m.pageCapturesInput()
 
 		// Handle mode-specific keys FIRST before global keys
@@ -279,12 +298,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.resizePages()
 
 		case "ctrl+p":
-			// The palette navigates away, which would silently drop unsaved
-			// text, so it stays closed while the editor is open.
-			if m.currentPage == PageEdit {
-				return m, nil
-			}
-			// Toggle command palette (works everywhere else)
+			// Toggle command palette (works everywhere)
 			m.cmdPalette.Toggle()
 			m.showPalette = m.cmdPalette.IsOpen()
 			return m, nil
@@ -331,6 +345,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if isSearchPage {
 				break // Fall through to page delegation
 			}
+			if m.pageBusy() {
+				return m, nil
+			}
 			// Handle back navigation for other pages
 			if m.navigator.CanGoBack() {
 				previousPage, ok := m.navigator.Back()
@@ -356,13 +373,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case pages.EditBlockMsg:
-		// User picked a block to edit on the detail page
-		return m, m.navigateToEdit(msg.PageID, msg.BlockID)
-
-	case pages.EditFinishedMsg:
-		// User left the editor: return to the page and reload it if it changed
-		return m, m.finishEdit(msg)
+	case pages.PageCreatedMsg:
+		// Open the new page and reload the tree so it shows up there
+		return m, tea.Batch(m.navigateToDetail(msg.ID), m.fetchWorkspaceTreeCmd())
 
 	case components.CommandExecutedMsg:
 		// Command palette executed a command
@@ -370,12 +383,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleCommandExecution(msg)
 
 	case pages.DatabaseSelectedMsg:
+		if m.pageBusy() {
+			return m, nil
+		}
 		// User selected a different database
 		m.currentDBID = msg.DatabaseID
 		// Refresh list page with new database
 		return m, m.switchDatabase(msg.DatabaseID)
 
 	case pages.SearchNavigationMsg:
+		if m.pageBusy() {
+			return m, nil
+		}
 		// User selected a search result (page or database)
 		if msg.ObjectType == "database" {
 			// Switch to this database and show its pages
@@ -385,6 +404,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.navigateToDetail(msg.ID)
 
 	case pages.BackNavigationMsg:
+		if m.pageBusy() {
+			return m, nil
+		}
 		// Handle back navigation request from search page
 		if m.navigator.CanGoBack() {
 			previousPage, ok := m.navigator.Back()
@@ -433,6 +455,10 @@ func (m AppModel) View() string {
 
 	if m.err != nil {
 		return RenderError(m.err)
+	}
+
+	if m.showHelp {
+		return RenderHelp(m.width, m.height)
 	}
 
 	// Get current page view
@@ -562,17 +588,20 @@ func (m *AppModel) updateCurrentPage(msg tea.Msg) tea.Cmd {
 // Returns (handled, cmd) where handled indicates if the key was processed.
 func (m *AppModel) handleGlobalKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
+		return true, tea.Quit
+	case "q":
+		// Quitting mid-save would leave the outcome unknown; ctrl+c still
+		// quits at once.
+		if m.pageBusy() {
+			return true, nil
+		}
 		return true, tea.Quit
 	case "?":
-		// Toggle help display
-		m.showHelp = !m.showHelp
-		if m.showHelp {
-			m.statusBar.SetHelpText("Tab:focus tree | Ctrl+B:toggle tree | ←/→:expand | Enter:open | Ctrl+P:cmd | q:quit | ?:close")
-		} else {
-			m.statusBar.SetHelpText("? for help | Tab: focus tree")
-		}
+		m.showHelp = true
 		return true, nil
+	case "ctrl+n":
+		return true, m.onOpenPage("create a page inside it", (*pages.DetailPage).StartNewPage)
 	default:
 		return false, nil
 	}
@@ -621,49 +650,6 @@ func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
 	return m.navigateTo(PageDetail)
 }
 
-// navigateToEdit opens the editor for one block of a Notion page.
-func (m *AppModel) navigateToEdit(notionPageID, blockID string) tea.Cmd {
-	editPage := pages.NewEditPage(pages.NewEditPageInput{
-		Width:        m.contentWidth(),
-		Height:       m.contentHeight(),
-		NotionClient: m.notionClient,
-		PageID:       notionPageID,
-		BlockID:      blockID,
-	})
-	m.pages[PageEdit] = &editPage
-
-	// The editor needs the keyboard, so take focus away from the sidebar
-	m.sidebarFocus = false
-	m.treeView.SetFocused(false)
-	m.mode = ViewModeEdit
-	m.statusBar.SetMode(components.ModeEdit)
-
-	return m.navigateTo(PageEdit)
-}
-
-// finishEdit leaves the editor and reloads the detail page if anything was saved.
-func (m *AppModel) finishEdit(msg pages.EditFinishedMsg) tea.Cmd {
-	m.mode = ViewModeBrowse
-	m.statusBar.SetMode(components.ModeBrowse)
-	delete(m.pages, PageEdit)
-
-	if m.currentPage == PageEdit {
-		previousPage, ok := m.navigator.Back()
-		if !ok {
-			previousPage = PageDashboard
-		}
-		m.currentPage = previousPage
-	}
-
-	if !msg.Saved {
-		return nil
-	}
-	if detail, ok := m.pages[PageDetail].(*pages.DetailPage); ok && detail.PageID() == msg.PageID {
-		return detail.Refresh()
-	}
-	return nil
-}
-
 // goBack navigates to the previous page in history.
 func (m *AppModel) goBack() {
 	if previousPage, ok := m.navigator.Back(); ok {
@@ -700,10 +686,6 @@ func (m *AppModel) createPage(pageID PageID) {
 			PageID:       "",
 		})
 		m.pages[pageID] = &detailPage
-
-	case PageEdit:
-		// Edit page needs a page and block ID, so it is only created by
-		// navigateToEdit. Nothing to create here.
 
 	case PageSearch:
 		searchPage := pages.NewSearchPage(pages.NewSearchPageInput{
@@ -775,10 +757,16 @@ func (m *AppModel) SetPageList(pagesList []pages.Page) {
 func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea.Cmd {
 	switch msg.ActionType {
 	case "search":
+		if m.pageBusy() {
+			return nil
+		}
 		// Navigate to search page
 		return m.navigateToSearch()
 
 	case "switch-db":
+		if m.pageBusy() {
+			return nil
+		}
 		// Navigate to database list page
 		return m.navigateToDatabaseList()
 
@@ -787,16 +775,41 @@ func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea
 		return m.refreshCurrentPage()
 
 	case "new-page":
-		// TODO: Implement new page creation
-		return nil
+		return m.onOpenPage("create a page inside it", (*pages.DetailPage).StartNewPage)
 
 	case "export":
-		// TODO: Implement export functionality
+		return m.onOpenPage("export it", (*pages.DetailPage).Export)
+
+	case "help":
+		m.showHelp = true
 		return nil
 
 	default:
 		return nil
 	}
+}
+
+// pageBusy reports whether the open page is in the middle of a save, create
+// or export. Navigation and quitting wait for it: leaving now would hide
+// the result, including the location of the user's text if the save fails.
+func (m *AppModel) pageBusy() bool {
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	if !ok || !detail.Busy() {
+		return false
+	}
+	m.statusBar.SetHelpText("Still working on the open page; ctrl+c quits anyway")
+	return true
+}
+
+// onOpenPage runs an action on the page being viewed. Actions like "new
+// page" and "export" need a page; without one the status bar says so.
+func (m *AppModel) onOpenPage(purpose string, action func(*pages.DetailPage) tea.Cmd) tea.Cmd {
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	if !ok || m.currentPage != PageDetail {
+		m.statusBar.SetHelpText("Open a page first to " + purpose)
+		return nil
+	}
+	return action(detail)
 }
 
 // navigateToSearch navigates to the workspace search page.

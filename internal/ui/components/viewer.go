@@ -48,7 +48,6 @@ type PageViewer struct {
 	viewport viewport.Model
 	content  string
 	pageID   string
-	blocks   []notionapi.Block
 	ready    bool
 	loading  bool
 	err      error
@@ -118,6 +117,7 @@ type ViewerInterface interface {
 	Update(tea.Msg) (ViewerInterface, tea.Cmd)
 	View() string
 	SetBlocks([]notionapi.Block) tea.Cmd
+	SetMarkdown(markdown string) tea.Cmd
 	SetSize(width, height int)
 }
 
@@ -198,33 +198,42 @@ func (pv PageViewer) View() string {
 // Returns a command that performs the conversion asynchronously.
 // Following the Bubble Tea pattern of non-blocking Update().
 func (pv PageViewer) SetBlocks(blocks []notionapi.Block) tea.Cmd {
-	pv.blocks = blocks
-	pv.loading = true
-	pv.err = nil
-
+	width := pv.width
 	return func() tea.Msg {
 		// Convert blocks to markdown
 		markdown, err := notion.ConvertBlocksToMarkdown(blocks)
 		if err != nil {
 			return ErrorMsg{message: "failed to convert blocks", err: err}
 		}
-
-		// Render with glamour using dark theme
-		renderer, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(viewportWidth(pv.width)), // Fit inside border and padding
-		)
-		if err != nil {
-			return ErrorMsg{message: "failed to create renderer", err: err}
-		}
-
-		rendered, err := renderer.Render(markdown)
-		if err != nil {
-			return ErrorMsg{message: "failed to render markdown", err: err}
-		}
-
-		return ContentLoadedMsg{content: rendered, err: nil}
+		return renderMarkdown(markdown, width)
 	}
+}
+
+// SetMarkdown renders Markdown text into the viewer.
+// Returns a command that performs the rendering asynchronously.
+func (pv PageViewer) SetMarkdown(markdown string) tea.Cmd {
+	width := pv.width
+	return func() tea.Msg {
+		return renderMarkdown(markdown, width)
+	}
+}
+
+// renderMarkdown styles Markdown for the terminal at the viewer's width.
+func renderMarkdown(markdown string, viewerWidth int) tea.Msg {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(viewportWidth(viewerWidth)), // Fit inside border and padding
+	)
+	if err != nil {
+		return ErrorMsg{message: "failed to create renderer", err: err}
+	}
+
+	rendered, err := renderer.Render(markdown)
+	if err != nil {
+		return ErrorMsg{message: "failed to render markdown", err: err}
+	}
+
+	return ContentLoadedMsg{content: rendered, err: nil}
 }
 
 // SetContent directly sets the viewport content.

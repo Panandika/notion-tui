@@ -27,6 +27,17 @@ type MockNotionClient struct {
 	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
 	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 
+	// Page Markdown behavior (see mocks_markdown.go)
+	PageMarkdownToReturn     *notion.PageMarkdown
+	GetPageMarkdownFunc      func(ctx context.Context, id string) (*notion.PageMarkdown, error)
+	UpdatePageMarkdownFunc   func(ctx context.Context, id string, updates []notion.ContentUpdate) (*notion.PageMarkdown, error)
+	ReplacePageMarkdownFunc  func(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
+	CreatePageMarkdownFunc   func(ctx context.Context, parentPageID, markdown string) (*notion.CreatedPage, error)
+	GetPageMarkdownCalls     []string
+	UpdatePageMarkdownCalls  []UpdatePageMarkdownCall
+	ReplacePageMarkdownCalls []ReplacePageMarkdownCall
+	CreatePageMarkdownCalls  []CreatePageMarkdownCall
+
 	// Call tracking for assertions
 	GetPageCalls       []GetPageCall
 	QueryDatabaseCalls []QueryDatabaseCall
