@@ -1211,6 +1211,8 @@ func TestListPage_SelectionFollowsSortAndFilter(t *testing.T) {
 		Page{ID: "a", Title: "apple", UpdatedAt: time.Now()},
 	)
 	lp.Update(listKey('s')) // title order: apple first
+	assert.Equal(t, "b", lp.sidebar.SelectedID(), "the cursor stays on the same row when the order changes")
+	lp.Update(listKey('g')) // go to the top of the sorted list
 
 	_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	selected := firstMsgOfType[components.ItemSelectedMsg](t, cmd)
@@ -1324,4 +1326,71 @@ func TestListPage_NewRow(t *testing.T) {
 		assert.LessOrEqual(t, lipgloss.Height(view), 8)
 		assert.LessOrEqual(t, lipgloss.Width(view), 30)
 	})
+}
+
+func TestListPage_LateLoadMoreOfAnOlderListIsDropped(t *testing.T) {
+	t.Parallel()
+
+	client := &MockNotionClient{}
+	client.QueryDatabaseFunc = func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+		return &notionapi.DatabaseQueryResponse{}, nil
+	}
+	lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: client, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}}, hasMore: true, nextCursor: "c1"})
+
+	// The user asks for more, then the list is reloaded before that arrives
+	_, more := lp.Update(listKey('m'))
+	require.NotNil(t, more)
+	lp.Refresh()
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}, {ID: "r2", Title: "two"}}})
+
+	lp.Update(pagesLoadedMsg{more: true, epoch: 0, pages: []Page{{ID: "old", Title: "from the old list"}}})
+
+	var ids []string
+	for _, item := range lp.sidebar.Items() {
+		ids = append(ids, item.ID())
+	}
+	assert.Equal(t, []string{"r1", "r2"}, ids, "neither duplicated nor replaced by the stale page")
+	assert.False(t, lp.loadingMore)
+}
+
+func TestListPage_LoadMoreAppends(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}}, hasMore: true, nextCursor: "c1"})
+
+	lp.Update(pagesLoadedMsg{more: true, epoch: lp.epoch, pages: []Page{{ID: "r2", Title: "two"}}})
+
+	assert.Len(t, lp.sidebar.Items(), 2)
+}
+
+func TestListPage_ReloadKeepsTheCursorOnTheSameRow(t *testing.T) {
+	t.Parallel()
+
+	lp := loadedList(t, &MockNotionClient{}, Page{ID: "a", Title: "a"}, Page{ID: "b", Title: "b"}, Page{ID: "c", Title: "c"})
+	lp.Update(listKey('j'))
+	require.Equal(t, "b", lp.sidebar.SelectedID())
+
+	// A row was added above while the user was away
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "new", Title: "new"}, {ID: "a", Title: "a"}, {ID: "b", Title: "b"}, {ID: "c", Title: "c"}}})
+
+	assert.Equal(t, "b", lp.sidebar.SelectedID())
+}
+
+func TestListPage_NewRowPromptIsVisibleInAnEmptyDatabase(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 20, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{})
+	assert.Contains(t, lp.View(), "Press n to add one")
+
+	lp.Update(listKey('n'))
+	for _, r := range "First" {
+		lp.Update(listKey(r))
+	}
+
+	view := lp.View()
+	assert.Contains(t, view, "New row title: First", "the user must see what they type")
+	assert.LessOrEqual(t, lipgloss.Height(view), 20)
 }

@@ -73,20 +73,27 @@ type todoItem struct {
 
 var (
 	todoLinePattern = regexp.MustCompile(`^(\s*- \[)([ xX])(\] ?)(.*)$`)
-	fenceLine       = regexp.MustCompile("^\\s*(```|~~~)")
+	fenceOpen       = regexp.MustCompile("^\\s*(`{3,}|~{3,})(.*)$")
 )
 
 // parseTodos finds the to-do lines of a page, ignoring code blocks.
 func parseTodos(markdown string) []todoItem {
 	var todos []todoItem
-	inFence := false
+	fence := "" // Marker that opened the current code block
 	for index, line := range strings.Split(markdown, "\n") {
-		if fenceLine.MatchString(line) {
-			inFence = !inFence
+		if fence != "" {
+			if closesCodeFence(line, fence) {
+				fence = ""
+			}
 			continue
 		}
-		if inFence {
-			continue
+		if m := fenceOpen.FindStringSubmatch(line); m != nil {
+			// A backtick fence cannot have a backtick in its info string;
+			// "```x``` text" is inline code, not the start of a block.
+			if m[1][0] != '`' || !strings.Contains(m[2], "`") {
+				fence = m[1]
+				continue
+			}
 		}
 		if m := todoLinePattern.FindStringSubmatch(line); m != nil {
 			todos = append(todos, todoItem{line: index, checked: m[2] != " ", text: m[4]})
@@ -95,17 +102,30 @@ func parseTodos(markdown string) []todoItem {
 	return todos
 }
 
+// closesCodeFence reports whether a line ends a code block opened with
+// marker: the same character, at least as many, and nothing else.
+func closesCodeFence(line, marker string) bool {
+	trimmed := strings.TrimSpace(line)
+	return len(trimmed) >= len(marker) && strings.Trim(trimmed, marker[:1]) == ""
+}
+
 // toggleTodoLine returns the Markdown with the to-do on the given line
-// checked or unchecked. ok is false when that line is not a to-do.
+// checked or unchecked. ok is false when that line is not a to-do of the
+// page (for example a look-alike line inside a code block).
 func toggleTodoLine(markdown string, line int) (edited string, ok bool) {
+	isTodo := false
+	for _, todo := range parseTodos(markdown) {
+		if todo.line == line {
+			isTodo = true
+			break
+		}
+	}
+	if !isTodo {
+		return markdown, false
+	}
+
 	lines := strings.Split(markdown, "\n")
-	if line < 0 || line >= len(lines) {
-		return markdown, false
-	}
 	m := todoLinePattern.FindStringSubmatch(lines[line])
-	if m == nil {
-		return markdown, false
-	}
 	mark := "x"
 	if m[2] != " " {
 		mark = " "
@@ -166,7 +186,7 @@ func plainText(markdown string) string {
 
 // StartProperties opens the list of properties that can be changed.
 func (dp *DetailPage) StartProperties() tea.Cmd {
-	if !dp.ready() || dp.mode != modeView {
+	if !dp.ready() {
 		return nil
 	}
 	databaseID := ""
@@ -199,7 +219,7 @@ func (dp *DetailPage) StartProperties() tea.Cmd {
 
 // StartTodos opens the list of the page's to-dos.
 func (dp *DetailPage) StartTodos() tea.Cmd {
-	if !dp.ready() || dp.mode != modeView {
+	if !dp.ready() {
 		return nil
 	}
 	if dp.truncated {
@@ -358,10 +378,14 @@ func (dp *DetailPage) beginPropertyEdit() tea.Cmd {
 		input.Placeholder = "YYYY-MM-DD"
 		input.CharLimit = 10
 		input.Prompt = property.Name + ": "
-		// Only the start date is editable here; a time or end date is dropped
-		// on save, so prefill just the date part.
+		// Only a single date can be typed here. A value with a time or an
+		// end date is longer than a bare date; the prompt says that saving a
+		// change will replace it.
+		dp.dateCurrent = ""
+		dp.dateComplex = len(property.Text) > len("2006-01-02")
 		if len(property.Text) >= 10 {
-			input.SetValue(property.Text[:10])
+			dp.dateCurrent = property.Text[:10]
+			input.SetValue(dp.dateCurrent)
 		}
 		input.CursorEnd()
 		input.Focus()
@@ -386,6 +410,11 @@ func (dp *DetailPage) updateOptions(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		choice := dp.options[index]
+		// Choosing the current value changes nothing: do not write it.
+		if choice == dp.editing.Text || (choice == clearOption && dp.editing.Text == "") {
+			dp.openProperties(dp.propCursor)
+			return nil
+		}
 		if dp.editing.Type == notionapi.PropertyTypeStatus {
 			return dp.savePropertyCmd(notion.StatusUpdate(dp.editing.Name, choice))
 		}
@@ -403,6 +432,12 @@ func (dp *DetailPage) updateDate(msg tea.KeyMsg) tea.Cmd {
 		dp.openProperties(dp.propCursor)
 		return nil
 	case "enter":
+		// Unchanged input writes nothing. This matters most for a date with
+		// a time or end date, which a save would reduce to a single date.
+		if strings.TrimSpace(dp.dateInput.Value()) == dp.dateCurrent {
+			dp.openProperties(dp.propCursor)
+			return nil
+		}
 		update, err := notion.DateUpdate(dp.editing.Name, dp.dateInput.Value())
 		if err != nil {
 			dp.inputErr = err.Error()
@@ -426,6 +461,14 @@ func (dp *DetailPage) updateTodos(msg tea.KeyMsg) tea.Cmd {
 	case " ", "enter", "x":
 		index := dp.picker.Cursor()
 		if index >= len(dp.todos) {
+			return nil
+		}
+		// The list must still describe the page. If the content changed
+		// underneath it, a stored line number could point at another line.
+		current := parseTodos(dp.markdown)
+		if index >= len(current) || current[index] != dp.todos[index] {
+			dp.syncTodos()
+			dp.inputErr = "The page changed; the list was updated. Check the selection and try again"
 			return nil
 		}
 		edited, ok := toggleTodoLine(dp.markdown, dp.todos[index].line)
@@ -527,14 +570,20 @@ func (dp *DetailPage) handleTodoSaved(msg todoSavedMsg) tea.Cmd {
 	dp.storeInCache(msg.markdown, msg.truncated)
 	cmd := dp.showMarkdown(msg.markdown, msg.truncated)
 
+	dp.syncTodos()
+	dp.picker.SetCursor(cursor)
+	return cmd
+}
+
+// syncTodos rebuilds the to-do list from the page's current content, closing
+// the list if no to-dos are left.
+func (dp *DetailPage) syncTodos() {
 	dp.todos = parseTodos(dp.markdown)
 	if len(dp.todos) == 0 {
 		dp.setMode(modeView)
-		return cmd
+		return
 	}
 	dp.picker.SetItems(todoPickerItems(dp.todos))
-	dp.picker.SetCursor(cursor)
-	return cmd
 }
 
 // renderMode draws the open mode in place of the page view.
@@ -560,6 +609,10 @@ func (dp *DetailPage) renderMode() string {
 			lipgloss.NewStyle().Bold(true).Render("Change date"),
 			"",
 			dp.dateInput.View(),
+		}
+		if dp.dateComplex {
+			lines = append(lines, "", mutedStyle.Render(
+				"Now: "+dp.editing.Text+". Saving a different date replaces the time and end date."))
 		}
 		body = lipgloss.JoinVertical(lipgloss.Left, lines...)
 	} else {

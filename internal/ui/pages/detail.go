@@ -41,6 +41,9 @@ const (
 // PageCreatedMsg is emitted after a new page was created in Notion.
 type PageCreatedMsg struct {
 	ID string
+	// ParentPageID is the page the new page was created inside. It is empty
+	// for a new database row.
+	ParentPageID string
 }
 
 // pageLoadedMsg is returned when page data is fetched.
@@ -156,16 +159,18 @@ type DetailPage struct {
 	busy      bool          // An edit, save, create or export is in progress
 
 	// Modes shown in place of the page view (see detail_modes.go)
-	mode       detailMode
-	picker     components.Picker
-	schema     *notionapi.Database  // Database that defines this page's properties
-	editing    notion.PropertyValue // Property being changed
-	options    []string             // Choices shown for that property
-	propCursor int                  // Row to return to in the property list
-	dateInput  textinput.Model
-	todos      []todoItem
-	inputErr   string // Problem with the last input or save, shown in the mode
-	notice     string // One-off message shown in the status bar
+	mode        detailMode
+	picker      components.Picker
+	schema      *notionapi.Database  // Database that defines this page's properties
+	editing     notion.PropertyValue // Property being changed
+	options     []string             // Choices shown for that property
+	propCursor  int                  // Row to return to in the property list
+	dateInput   textinput.Model
+	dateCurrent string // Start date the prompt opened with
+	dateComplex bool   // The property also has a time or an end date
+	todos       []todoItem
+	inputErr    string // Problem with the last input or save, shown in the mode
+	notice      string // One-off message shown in the status bar
 }
 
 // NewDetailPageInput contains the parameters for creating a DetailPage.
@@ -243,7 +248,12 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		dp.page = msg.page
 		dp.loading = false
 		dp.statusBar.SetSyncStatus(components.StatusSynced)
-		return dp, dp.showMarkdown(msg.markdown, msg.truncated)
+		cmd := dp.showMarkdown(msg.markdown, msg.truncated)
+		// A to-do list on screen must follow the content it was built from
+		if dp.mode == modeTodos {
+			dp.syncTodos()
+		}
+		return dp, cmd
 
 	case editSourceMsg:
 		return dp, dp.handleEditSource(msg)
@@ -375,6 +385,11 @@ func (dp *DetailPage) View() string {
 
 // Refresh reloads the current page from the API, bypassing cache.
 func (dp *DetailPage) Refresh() tea.Cmd {
+	// Not while a property or to-do list is open or a change is being
+	// saved: replacing the content underneath would invalidate them.
+	if dp.mode != modeView || dp.busy {
+		return nil
+	}
 	dp.loading = true
 	dp.err = nil
 	dp.statusBar.SetSyncStatus(components.StatusSyncing)
@@ -434,9 +449,16 @@ func (dp *DetailPage) Export() tea.Cmd {
 	}
 }
 
-// ready reports whether the page is loaded and no other action is running.
+// ready reports whether the page is loaded, showing its content, and no
+// other action is running.
 func (dp *DetailPage) ready() bool {
-	return !dp.loading && dp.err == nil && !dp.busy
+	return !dp.loading && dp.err == nil && !dp.busy && dp.mode == modeView
+}
+
+// InMode reports whether a property, option, date or to-do list is open in
+// place of the page. The root model keeps the command palette closed then.
+func (dp *DetailPage) InMode() bool {
+	return dp.mode != modeView
 }
 
 // handleEditSource writes the fetched Markdown to a temp file and opens it.
@@ -622,7 +644,7 @@ func (dp *DetailPage) handlePageCreated(msg pageCreatedResultMsg) tea.Cmd {
 	dp.endSession(true)
 	dp.setNotice("Page created")
 
-	created := PageCreatedMsg{ID: msg.id}
+	created := PageCreatedMsg{ID: msg.id, ParentPageID: dp.pageID}
 	return func() tea.Msg { return created }
 }
 

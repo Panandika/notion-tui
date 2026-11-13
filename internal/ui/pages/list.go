@@ -59,6 +59,10 @@ type pagesLoadedMsg struct {
 	hasMore    bool
 	nextCursor string
 	err        error
+	// more marks the next page of an earlier result ("load more") rather
+	// than a fresh first page. epoch is the reload it continues.
+	more  bool
+	epoch int
 }
 
 // rowCreatedMsg is the result of creating a new row.
@@ -119,6 +123,7 @@ type ListPage struct {
 	databaseID   string
 
 	sort      rowSort
+	epoch     int             // Counts reloads, so a late "load more" of an older list is dropped
 	prompt    textinput.Model // Title prompt for a new row
 	prompting bool
 	creating  bool
@@ -180,6 +185,10 @@ func (lp *ListPage) Init() tea.Cmd {
 func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pagesLoadedMsg:
+		// A next page that belongs to a list reloaded since is out of date
+		if msg.more && msg.epoch != lp.epoch {
+			return lp, nil
+		}
 		if msg.err != nil {
 			lp.loading = false
 			lp.loadingMore = false
@@ -190,13 +199,10 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		lp.err = nil
-
-		// If loading more, append to existing pages; otherwise replace
-		wasLoadingMore := lp.loadingMore
 		lp.loading = false
 		lp.loadingMore = false
 
-		if wasLoadingMore && len(lp.pageList) > 0 && len(msg.pages) > 0 {
+		if msg.more {
 			lp.pageList = append(lp.pageList, msg.pages...)
 		} else {
 			lp.pageList = msg.pages
@@ -206,12 +212,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lp.nextCursor = msg.nextCursor
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
-
-		helpText := fmt.Sprintf("%d pages | r: refresh", len(lp.pageList))
-		if lp.hasMore {
-			helpText += " | m: load more"
-		}
-		lp.statusBar.SetHelpText(helpText)
+		lp.updateStatusBarFromSidebar()
 		return lp, nil
 
 	case components.ItemSelectedMsg:
@@ -348,7 +349,14 @@ func (lp *ListPage) View() string {
 			Height(lp.height-1).
 			Align(lipgloss.Center, lipgloss.Center).
 			Foreground(lipgloss.Color("#6B7280"))
-		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render("This database has no pages"), status)
+		empty := emptyStyle.Render("This database has no pages. Press n to add one")
+		if lp.prompting {
+			// The prompt must be visible here too, or the user types blind
+			emptyStyle = emptyStyle.Height(lp.height - 2)
+			prompt := lipgloss.NewStyle().MaxWidth(lp.width).Render(lp.prompt.View())
+			return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render("This database has no pages"), prompt, status)
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, empty, status)
 	}
 
 	// The database's rows: move with j/k, open with enter, filter with /.
@@ -436,6 +444,12 @@ func listHeight(pageHeight int) int {
 
 // CapturesInput reports whether the row filter is being typed, in which
 // case key presses are filter text rather than shortcuts.
+// InMode reports whether the new-row prompt is open. The root model keeps
+// the command palette closed then.
+func (lp *ListPage) InMode() bool {
+	return lp.prompting
+}
+
 func (lp *ListPage) CapturesInput() bool {
 	return lp.prompting || lp.sidebar.FilterState() == list.Filtering
 }
@@ -462,6 +476,11 @@ func (lp *ListPage) Refresh() tea.Cmd {
 
 // fetchPagesCmd returns a command that fetches pages from the database.
 func (lp *ListPage) fetchPagesCmd() tea.Cmd {
+	// A fresh first page starts a new list: anything still loading for the
+	// old one no longer applies.
+	lp.epoch++
+	lp.loadingMore = false
+	lp.nextCursor = ""
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -493,6 +512,8 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 
 // loadMoreCmd returns a command that fetches the next page of results.
 func (lp *ListPage) loadMoreCmd() tea.Cmd {
+	epoch := lp.epoch
+	cursor := lp.nextCursor
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -502,21 +523,25 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 			}
 		}
 
-		if lp.nextCursor == "" {
+		if cursor == "" {
 			return pagesLoadedMsg{
-				err: fmt.Errorf("no cursor available for pagination"),
+				more:  true,
+				epoch: epoch,
+				err:   fmt.Errorf("no cursor available for pagination"),
 			}
 		}
 
 		// Create pagination request with the next cursor
 		req := &notionapi.DatabaseQueryRequest{
-			StartCursor: notionapi.Cursor(lp.nextCursor),
+			StartCursor: notionapi.Cursor(cursor),
 		}
 
 		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, req)
 		if err != nil {
 			return pagesLoadedMsg{
-				err: fmt.Errorf("fetch more pages: %w", err),
+				more:  true,
+				epoch: epoch,
+				err:   fmt.Errorf("fetch more pages: %w", err),
 			}
 		}
 
@@ -526,6 +551,8 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 		}
 
 		return pagesLoadedMsg{
+			more:       true,
+			epoch:      epoch,
 			pages:      pages,
 			hasMore:    resp.HasMore,
 			nextCursor: string(resp.NextCursor),
@@ -535,6 +562,10 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 
 // updateSidebarItems converts the page list to sidebar items.
 func (lp *ListPage) updateSidebarItems() {
+	// Keep the cursor on the same row when the list is reloaded or resorted
+	selected := lp.sidebar.SelectedID()
+	defer func() { lp.sidebar.SelectID(selected) }()
+
 	rows := lp.sortedRows()
 	items := make([]components.Item, 0, len(rows))
 	for _, page := range rows {

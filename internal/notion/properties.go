@@ -91,6 +91,12 @@ func propertyText(property notionapi.Property) (text string, checked bool) {
 	case *notionapi.RichTextProperty:
 		return GetRichTextString(p.RichText), false
 	case *notionapi.NumberProperty:
+		// The library decodes an unset number as 0, so the two cannot be
+		// told apart. Showing nothing for 0 avoids a "0" on every row that
+		// has no number, at the cost of hiding a real zero.
+		if p.Number == 0 {
+			return "", false
+		}
 		return strconv.FormatFloat(p.Number, 'f', -1, 64), false
 	case *notionapi.SelectProperty:
 		return p.Select.Name, false

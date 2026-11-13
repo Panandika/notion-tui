@@ -569,7 +569,7 @@ func TestDetailPage_NewPage_CreatesChildOfCurrentPage(t *testing.T) {
 	assert.Equal(t, notion.PageParent{PageID: "page-1"}, call.Parent)
 	assert.Equal(t, "# Meeting notes\n\n- item", call.Markdown)
 	require.Len(t, escaped, 1)
-	assert.Equal(t, PageCreatedMsg{ID: "created-page-id"}, escaped[0])
+	assert.Equal(t, PageCreatedMsg{ID: "created-page-id", ParentPageID: "page-1"}, escaped[0])
 }
 
 func TestDetailPage_NewPage_UntouchedTemplateCreatesNothing(t *testing.T) {

@@ -3,7 +3,9 @@ package pages
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jomei/notionapi"
@@ -135,6 +137,10 @@ func TestDetailPage_Properties_SelectCanBeSetAndCleared(t *testing.T) {
 	t.Parallel()
 
 	fx := newRowFixture(t, "body")
+	fx.client.SetPagePropertyFunc = func(context.Context, string, notion.PropertyUpdate) error {
+		fx.client.PageToReturn = rowPage("Not started", "L", false)
+		return nil
+	}
 
 	// Size is the second property
 	fx.press(t, keyRune('p'), keyRune('j'), enterKey)
@@ -226,7 +232,7 @@ func TestDetailPage_Properties_SaveFailureIsShownAndRecoverable(t *testing.T) {
 		return errors.New("forbidden")
 	}
 
-	fx.press(t, keyRune('p'), enterKey, enterKey)
+	fx.press(t, keyRune('p'), enterKey, keyRune('j'), enterKey)
 
 	assert.Contains(t, fx.page.View(), "forbidden")
 	assert.False(t, fx.page.Busy(), "the page must not stay locked after a failed save")
@@ -428,4 +434,150 @@ func TestPlainText(t *testing.T) {
 			assert.Equal(t, tt.want, plainText(tt.markdown))
 		})
 	}
+}
+
+func TestParseTodos_CodeFences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		markdown string
+		want     []int // Lines that are to-dos
+	}{
+		{name: "tilde fence", markdown: "~~~\n- [ ] code\n~~~\n- [ ] real", want: []int{3}},
+		{name: "longer fence holds a shorter one", markdown: "````\n```\n- [ ] code\n```\n````\n- [ ] real", want: []int{5}},
+		{name: "backtick block holds tildes", markdown: "```\n~~~\n- [ ] code\n```\n- [ ] real", want: []int{4}},
+		{name: "indented fence", markdown: "  ```\n  - [ ] code\n  ```\n- [ ] real", want: []int{3}},
+		{name: "inline code at line start is not a fence", markdown: "```x``` text\n- [ ] real", want: []int{1}},
+		{name: "fence with a language", markdown: "```go\n- [ ] code\n```\n- [ ] real", want: []int{3}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var lines []int
+			for _, todo := range parseTodos(tt.markdown) {
+				lines = append(lines, todo.line)
+			}
+			assert.Equal(t, tt.want, lines)
+		})
+	}
+}
+
+func TestToggleTodoLine_RefusesLinesInsideCode(t *testing.T) {
+	t.Parallel()
+
+	markdown := "```\n- [ ] looks like a to-do\n```\n- [ ] real"
+
+	same, ok := toggleTodoLine(markdown, 1)
+
+	assert.False(t, ok)
+	assert.Equal(t, markdown, same)
+}
+
+func TestDetailPage_Todos_StaleListNeverTogglesAnotherLine(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "- [ ] first\n- [ ] second")
+	fx.press(t, keyRune('t'), keyRune('j')) // cursor on "second"
+
+	// The content changes underneath the open list: a line was added above
+	fx.page.Update(pageLoadedMsg{pageID: "page-1", page: fx.page.Page(), markdown: "new intro\n- [ ] first\n- [ ] second"})
+	fx.page.todos = []todoItem{{line: 0, text: "first"}, {line: 1, text: "second"}} // as if the list had not followed
+
+	fx.press(t, spaceKey)
+
+	assert.Empty(t, fx.client.UpdatePageMarkdownCalls, "a stale line number must not be used")
+	assert.Empty(t, fx.client.ReplacePageMarkdownCalls)
+	assert.Contains(t, fx.page.View(), "The page changed")
+	assert.Equal(t, []todoItem{{line: 1, text: "first"}, {line: 2, text: "second"}}, fx.page.todos, "the list now matches the page")
+}
+
+func TestDetailPage_Todos_ListFollowsAReload(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "- [ ] first")
+	fx.press(t, keyRune('t'))
+
+	fx.page.Update(pageLoadedMsg{pageID: "page-1", page: fx.page.Page(), markdown: "intro\n- [x] first\n- [ ] added"})
+
+	assert.Equal(t, []todoItem{{line: 1, checked: true, text: "first"}, {line: 2, text: "added"}}, fx.page.todos)
+}
+
+func TestDetailPage_RefreshWaitsWhileAListIsOpen(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "- [ ] first")
+	fx.press(t, keyRune('t'))
+
+	assert.Nil(t, fx.page.Refresh(), "reloading would replace the content the list was built from")
+	assert.False(t, fx.page.IsLoading())
+	assert.Nil(t, fx.page.Export())
+	assert.Nil(t, fx.page.StartNewPage())
+	assert.Nil(t, fx.page.StartEdit())
+}
+
+func timedRowPage(t *testing.T) *notionapi.Page {
+	t.Helper()
+	page := rowPage("Not started", "", false)
+	start, err := time.Parse(time.RFC3339, "2026-11-12T10:00:00Z")
+	require.NoError(t, err)
+	end, err := time.Parse("2006-01-02", "2026-11-14")
+	require.NoError(t, err)
+	startDate, endDate := notionapi.Date(start), notionapi.Date(end)
+	page.Properties["Due"] = &notionapi.DateProperty{Type: notionapi.PropertyTypeDate, Date: &notionapi.DateObject{Start: &startDate, End: &endDate}}
+	return page
+}
+
+func TestDetailPage_Properties_DateWithTimeOrRangeIsNotDroppedSilently(t *testing.T) {
+	t.Parallel()
+
+	open := func(t *testing.T) detailFixture {
+		fx := newRowFixture(t, "body")
+		fx.client.PageToReturn = timedRowPage(t)
+		fx.drain(t, fx.page.Refresh())
+		fx.press(t, keyRune('p'), keyRune('j'), keyRune('j'), enterKey)
+		require.Equal(t, modeDate, fx.page.mode)
+		return fx
+	}
+
+	t.Run("enter without changes writes nothing", func(t *testing.T) {
+		t.Parallel()
+		fx := open(t)
+
+		fx.press(t, enterKey)
+
+		assert.Empty(t, fx.client.SetPagePropertyCalls, "the time and end date must survive just looking at the prompt")
+		assert.Equal(t, modeProperties, fx.page.mode)
+	})
+
+	t.Run("the prompt says what a change will replace", func(t *testing.T) {
+		t.Parallel()
+		fx := open(t)
+
+		// The notice may wrap, so compare with whitespace collapsed
+		view := strings.Join(strings.Fields(fx.page.View()), " ")
+
+		assert.Contains(t, view, "2026-11-12 10:00 → 2026-11-14")
+		assert.Contains(t, view, "replaces the time and end date")
+	})
+
+	t.Run("a plain date gets no such warning", func(t *testing.T) {
+		t.Parallel()
+		fx := newRowFixture(t, "body")
+		fx.press(t, keyRune('p'), keyRune('j'), keyRune('j'), enterKey)
+
+		assert.NotContains(t, fx.page.View(), "replaces the time")
+	})
+}
+
+func TestDetailPage_Properties_ChoosingTheCurrentValueWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	fx := newRowFixture(t, "body")
+
+	fx.press(t, keyRune('p'), enterKey, enterKey) // status: cursor starts on the current option
+
+	assert.Empty(t, fx.client.SetPagePropertyCalls)
+	assert.Equal(t, modeProperties, fx.page.mode)
 }

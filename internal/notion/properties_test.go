@@ -215,3 +215,20 @@ func TestCreatePageMarkdown_Parents(t *testing.T) {
 		})
 	}
 }
+
+func TestPageProperties_UnsetNumberShowsNothing(t *testing.T) {
+	t.Parallel()
+
+	page := &notionapi.Page{Properties: notionapi.Properties{
+		"Empty":  &notionapi.NumberProperty{Type: notionapi.PropertyTypeNumber},
+		"Points": &notionapi.NumberProperty{Type: notionapi.PropertyTypeNumber, Number: 3.5},
+	}}
+
+	byName := map[string]string{}
+	for _, value := range PageProperties(page) {
+		byName[value.Name] = value.Text
+	}
+
+	assert.Empty(t, byName["Empty"])
+	assert.Equal(t, "3.5", byName["Points"])
+}
