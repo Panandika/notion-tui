@@ -79,6 +79,9 @@ func (c *Client) GetPageMarkdown(ctx context.Context, id string) (*PageMarkdown,
 // UpdatePageMarkdown applies search-and-replace edits to a page. Content the
 // edits do not touch keeps its blocks, so comments and child pages survive.
 func (c *Client) UpdatePageMarkdown(ctx context.Context, id string, updates []ContentUpdate) (*PageMarkdown, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	if len(updates) == 0 {
 		return nil, errors.New("update page markdown: no edits given")
 	}
@@ -97,6 +100,9 @@ func (c *Client) UpdatePageMarkdown(ctx context.Context, id string, updates []Co
 // ReplacePageMarkdown replaces a page's whole content. The API refuses to
 // delete child pages or databases this way, which is the behavior we want.
 func (c *Client) ReplacePageMarkdown(ctx context.Context, id, markdown string) (*PageMarkdown, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"markdown_version": markdownFormat,
 		"type":             "replace_content",
@@ -135,6 +141,9 @@ func (p PageParent) body() (map[string]any, error) {
 // heading when body text follows; a heading on its own would be left in the
 // content and the page would have no title.
 func (c *Client) CreatePageMarkdown(ctx context.Context, parent PageParent, markdown string) (*CreatedPage, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	parentBody, err := parent.body()
 	if err != nil {
 		return nil, fmt.Errorf("create page: %w", err)

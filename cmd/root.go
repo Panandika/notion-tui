@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/Panandika/notion-tui/internal/config"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/ui"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 	"github.com/Panandika/notion-tui/internal/version"
@@ -19,6 +21,8 @@ var rootCmd = &cobra.Command{
 	Use:     "notion-tui",
 	Short:   "A terminal UI for Notion",
 	Version: version.Short(),
+	// main prints the error; printing it here too would show it twice.
+	SilenceErrors: true,
 	Long: `notion-tui is a keyboard-driven terminal interface for browsing,
 editing, and managing your Notion databases and pages.
 
@@ -61,12 +65,23 @@ func init() {
 		"enable debug logging (env: NOTION_TUI_DEBUG)",
 	)
 
+	rootCmd.PersistentFlags().Bool(
+		"readonly", false,
+		"never change anything in Notion (env: NOTION_TUI_READONLY)",
+	)
+	rootCmd.PersistentFlags().String(
+		"theme", "",
+		"colours pages are drawn in: "+strings.Join(config.Themes(), ", ")+" (env: NOTION_TUI_THEME)",
+	)
+
 	// Bind flags to viper. BindPFlag only fails for a nil flag, and every
 	// flag looked up here is defined just above.
 	_ = viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
 	_ = viper.BindPFlag("notion_token", rootCmd.PersistentFlags().Lookup("token"))
 	_ = viper.BindPFlag("database_id", rootCmd.PersistentFlags().Lookup("database-id"))
 	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	_ = viper.BindPFlag("readonly", rootCmd.PersistentFlags().Lookup("readonly"))
+	_ = viper.BindPFlag("theme", rootCmd.PersistentFlags().Lookup("theme"))
 
 	// Automatically bind environment variables with NOTION_TUI_ prefix
 	viper.SetEnvPrefix("NOTION_TUI")
@@ -106,14 +121,24 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	keys, err := keymap.New(cfg.Keys)
+	if err != nil {
+		return err
+	}
+
 	// Ask the terminal for its background colour now, before the program
-	// takes over the keyboard (see components.SetLightBackground).
-	components.SetLightBackground(!lipgloss.HasDarkBackground())
+	// takes over the keyboard (see components.SetLightBackground). A theme
+	// chosen by the user needs no asking.
+	components.SetTheme(cfg.Theme)
+	if cfg.Theme == config.ThemeAuto {
+		components.SetLightBackground(!lipgloss.HasDarkBackground())
+	}
 
 	// Create and run the TUI
 	model := ui.NewModel(ui.NewModelInput{
 		Config: cfg,
 		Cache:  nil, // Will use default cache
+		Keys:   keys,
 	})
 	// The alternate screen gives the app the whole terminal and puts the
 	// user's previous screen back on exit and around the external editor.

@@ -16,6 +16,7 @@ import (
 	"github.com/jomei/notionapi"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 )
@@ -25,7 +26,8 @@ import (
 type ViewerInterface = components.ViewerInterface
 
 const (
-	detailHelpText = "e: edit | p: properties | t: to-dos | o: links | /: find | esc: back | ?: help"
+	// Shown in the status bar; "{action}" is filled with the key in effect
+	detailHelpText = "{edit}: edit | {properties}: properties | {todos}: to-dos | {links}: links | {find}: find | esc: back | {help}: help"
 
 	// cacheFormat marks cache entries written by this version of the page
 	// loader. Entries without it (older block caches) are ignored.
@@ -154,6 +156,8 @@ type DetailPage struct {
 
 	runEditor EditorRunner
 	exportDir string
+	readOnly  bool
+	keys      *keymap.Map
 	session   *editSession
 	quickExit time.Duration // See quickExitThreshold
 	busy      bool          // An edit, save, create or export is in progress
@@ -189,6 +193,10 @@ type NewDetailPageInput struct {
 	RunEditor EditorRunner
 	// ExportDir is where exports are written; empty means the working directory.
 	ExportDir string
+	// ReadOnly turns off everything that changes the page.
+	ReadOnly bool
+	// Keys names the keys in hints; nil means the default keys.
+	Keys *keymap.Map
 }
 
 // NewDetailPage creates a new DetailPage instance.
@@ -197,7 +205,7 @@ func NewDetailPage(input NewDetailPageInput) DetailPage {
 	statusBar.SetWidth(input.Width)
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText(detailHelpText)
+	statusBar.SetHelpText(input.Keys.Label(detailHelpText))
 
 	viewerHeight := input.Height - 1 // Reserve 1 line for status bar
 	if input.Viewer != nil {
@@ -220,6 +228,8 @@ func NewDetailPage(input NewDetailPageInput) DetailPage {
 		cache:        input.Cache,
 		runEditor:    runEditor,
 		exportDir:    input.ExportDir,
+		readOnly:     input.ReadOnly,
+		keys:         input.Keys,
 		quickExit:    quickExitThreshold,
 		openURL:      openInBrowser,
 	}
@@ -428,7 +438,7 @@ func (dp *DetailPage) Refresh() tea.Cmd {
 // StartEdit opens the page in the user's editor. The content is fetched
 // fresh first, so the edit starts from what Notion holds right now.
 func (dp *DetailPage) StartEdit() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	dp.busy = true
@@ -447,7 +457,7 @@ func (dp *DetailPage) StartEdit() tea.Cmd {
 
 // StartNewPage opens the editor for a new page created inside this page.
 func (dp *DetailPage) StartNewPage() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	session, err := newEditSession("new-page", newPageTemplate)
@@ -724,6 +734,18 @@ const statusBarReserve = 30
 
 // setNotice shows a one-off message: in the status bar when it fits, on its
 // own screen when it does not.
+// ReadOnlyNotice is what the user is told when an action would change
+// Notion while the app runs in read-only mode.
+const ReadOnlyNotice = "Read-only mode: this would change Notion, so it is turned off"
+
+// refuseChange reports whether changes are turned off, telling the user so.
+func (dp *DetailPage) refuseChange() bool {
+	if dp.readOnly {
+		dp.setNotice(ReadOnlyNotice)
+	}
+	return dp.readOnly
+}
+
 func (dp *DetailPage) setNotice(text string) {
 	dp.notice = text
 	if dp.noticeNeedsScreen() {
@@ -762,7 +784,7 @@ func (dp *DetailPage) clearNotice() {
 		return
 	}
 	dp.notice = ""
-	dp.statusBar.SetHelpText(detailHelpText)
+	dp.statusBar.SetHelpText(dp.keys.Label(detailHelpText))
 }
 
 // fetchPageCmd loads page data, trying cache first then falling back to API.

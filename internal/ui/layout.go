@@ -71,15 +71,12 @@ func LayoutWithStatusBar(input LayoutWithStatusBarInput) string {
 	contentStyle := lipgloss.NewStyle().
 		Height(contentHeight)
 
-	statusStyle := lipgloss.NewStyle().
-		Foreground(darkTheme.Muted).
-		Background(darkTheme.Secondary).
-		Padding(0, 1)
-
+	// The status bar arrives styled and sized to the terminal width; any
+	// padding here would push it past the right edge.
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		contentStyle.Render(input.Content),
-		statusStyle.Render(input.StatusBar),
+		input.StatusBar,
 	)
 }
 

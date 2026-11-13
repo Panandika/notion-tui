@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/testhelpers"
 )
@@ -657,7 +658,7 @@ func TestDetailPage_AnyKeyClearsTheNotice(t *testing.T) {
 	fx.page.Update(keyRune('j'))
 
 	assert.Empty(t, fx.page.notice)
-	assert.Equal(t, detailHelpText, fx.page.statusBar.HelpText())
+	assert.Equal(t, keymap.Default().Label(detailHelpText), fx.page.statusBar.HelpText())
 }
 
 func TestDetailPage_LongNoticeGetsItsOwnScreen(t *testing.T) {
@@ -795,4 +796,32 @@ func TestDetailPage_Edit_OtherValidationErrorsAreShownAsIs(t *testing.T) {
 	fx.drain(t, cmd)
 
 	assert.Contains(t, fx.page.notice, "Synced pages cannot be updated")
+}
+
+func TestPages_HintsNameTheChosenKeys(t *testing.T) {
+	t.Parallel()
+
+	keys, err := keymap.New(map[string]string{"edit": "E", "row_new": "a"})
+	require.NoError(t, err)
+
+	dp := NewDetailPage(NewDetailPageInput{Width: 120, Height: 24, Viewer: newMockViewer(), NotionClient: &MockNotionClient{}, PageID: "p", Keys: keys})
+	assert.Contains(t, dp.View(), "E: edit")
+
+	lp := NewListPage(NewListPageInput{Width: 120, Height: 20, NotionClient: &MockNotionClient{}, DatabaseID: "db", Keys: keys})
+	lp.Update(pagesLoadedMsg{})
+	assert.Contains(t, lp.View(), "Press a to add one")
+}
+
+func TestPages_ReadOnlyRefusesChanges(t *testing.T) {
+	t.Parallel()
+
+	client := &MockNotionClient{}
+	lp := NewListPage(NewListPageInput{Width: 120, Height: 20, NotionClient: client, DatabaseID: "db", ReadOnly: true})
+	lp.Update(pagesLoadedMsg{})
+
+	_, cmd := lp.Update(listKey('n'))
+
+	assert.Nil(t, cmd)
+	assert.False(t, lp.InMode(), "no prompt for a row title")
+	assert.Contains(t, lp.View(), "Read-only mode")
 }

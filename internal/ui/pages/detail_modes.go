@@ -219,7 +219,7 @@ func plainText(markdown string) string {
 
 // StartProperties opens the list of properties that can be changed.
 func (dp *DetailPage) StartProperties() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	databaseID := ""
@@ -252,7 +252,7 @@ func (dp *DetailPage) StartProperties() tea.Cmd {
 
 // StartTodos opens the list of the page's to-dos.
 func (dp *DetailPage) StartTodos() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	if dp.truncated {
@@ -334,7 +334,7 @@ func (dp *DetailPage) setMode(mode detailMode) {
 	case modeConfirm:
 		dp.statusBar.SetHelpText(confirmHelpText)
 	default:
-		dp.statusBar.SetHelpText(detailHelpText)
+		dp.statusBar.SetHelpText(dp.keys.Label(detailHelpText))
 	}
 }
 
@@ -478,7 +478,7 @@ func (dp *DetailPage) findNext(delta int) {
 
 // StartArchive asks before moving the page to Notion's trash.
 func (dp *DetailPage) StartArchive() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	dp.setMode(modeConfirm)

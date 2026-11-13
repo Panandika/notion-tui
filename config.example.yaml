@@ -142,3 +142,49 @@ cache_dir: "~/.cache/notion-tui"
 #   - Consider reducing database size or pagination
 
 # For more help, see: https://github.com/Panandika/notion-tui#troubleshooting
+
+# ============================================================================
+# OPTIONAL: Behaviour and looks
+# ============================================================================
+
+# Never change anything in Notion: no editing, no new pages or rows, no
+# property changes, no archiving. Also: --readonly, NOTION_TUI_READONLY=true
+# readonly: true
+
+# Colours pages are drawn in. "auto" follows the terminal's background.
+# One of: auto, dark, light, dracula, tokyo-night, pink, ascii, notty
+# theme: auto
+
+# Keys for actions, if you do not like the defaults. Give the action name
+# and the key: one character, ctrl+<letter>, alt+<character>, f1-f12, tab,
+# shift+tab, backspace or delete. Keys for moving, confirming and leaving
+# (arrows, h j k l, g G, f b u d, space, enter, esc, ctrl+c) cannot be used.
+#
+# Action          Default   Where
+# help            ?         everywhere
+# palette         ctrl+p    everywhere
+# sidebar         ctrl+b    everywhere
+# focus           tab       everywhere
+# quit            q         everywhere
+# new_page        ctrl+n    everywhere (needs an open page)
+# edit            e         page
+# properties      p         page
+# todos           t         page
+# links           o         page
+# back            [         page
+# forward         ]         page
+# find            /         page
+# find_next       n         page
+# find_previous   N         page
+# archive         D         page
+# reload          r         page
+# row_new         n         database rows
+# row_sort        s         database rows
+# row_filter      /         database rows
+# row_reload      r         database rows
+# row_more        m         database rows
+# tree_reload     r         sidebar
+#
+# keys:
+#   edit: E
+#   quit: ctrl+q

@@ -11,6 +11,9 @@ Browse your workspace, read pages, edit them in your own editor, create pages an
 - **Edit** - Open a page in `$VISUAL` / `$EDITOR`; only the parts you changed are written back, so formatting elsewhere is untouched
 - **Create** - New pages inside the page you are viewing, written in your editor
 - **Export** - Save a page as plain Markdown, from the app or with `notion-tui export`
+- **Quick capture** - `notion-tui add "text"` adds a database row or a page straight from the shell
+- **Read-only mode** - `--readonly` guarantees nothing in Notion is changed
+- **Your keys, your colours** - Rebind actions and pick a theme in the config file
 - **Search** - Search the workspace or a single database
 - **Cache** - Page content is cached on disk for faster reopening
 - **Rate limiting** - Stays within Notion's API limits and waits when the API asks it to
@@ -95,6 +98,7 @@ Press `?` in the app for the full key reference.
 | `j` / `↓`, `k` / `↑` | Move |
 | `h` / `←`, `l` / `→` | Collapse / expand |
 | `Enter` | Open a page or database; expand a parent |
+| `r` | Reload the workspace tree (open items and the selection are kept) |
 
 ### Page
 | Key | Action |
@@ -163,6 +167,16 @@ Press `t` on any page to list its to-dos and check or uncheck them with Space. E
 
 On a database's row list, `n` asks for a title and creates a new row.
 
+### From the shell
+
+`notion-tui add` creates a database row, or a page inside another page, without opening the app. The first line is the title and further lines are the content, as Markdown. It prints the new page's URL.
+
+```bash
+notion-tui add "Call the dentist"                  # row in the default database
+notion-tui add "Idea: offline mode" --db <database-id>
+git log -5 --oneline | notion-tui add --page <page-id>   # text from standard input
+```
+
 ## Exporting
 
 From the app, **Export Page** in the palette writes `<page-title>.md` to the directory the app was started in. Existing files are never overwritten; a numbered name is used instead.
@@ -188,6 +202,29 @@ export NOTION_TUI_DATABASE_ID="db-id"
 export NOTION_TUI_DEBUG=true
 export NOTION_TUI_CACHE_DIR="~/.cache/notion-tui"
 ```
+
+### Read-only mode
+
+`--readonly` (or `readonly: true`, or `NOTION_TUI_READONLY=true`) turns off everything that changes Notion: editing, properties, to-dos, new pages and rows, archiving and `notion-tui add`. The keys answer with a notice, and the Notion client itself refuses to send a change, so nothing can slip through. Browsing, search, following links and exporting work as usual.
+
+### Theme
+
+`theme:` (or `--theme`, `NOTION_TUI_THEME`) chooses the colours pages are drawn in: `auto` (the default, follows the terminal's background), `dark`, `light`, `dracula`, `tokyo-night`, `pink`, `ascii` or `notty`.
+
+### Keys
+
+Actions can be given other keys under `keys:`:
+
+```yaml
+keys:
+  edit: E
+  quit: ctrl+q
+  find_next: ctrl+g
+```
+
+A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab`, `shift+tab`, `backspace` or `delete`. Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
+
+Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
 
 ### Multiple databases
 
@@ -405,7 +442,6 @@ Special thanks to:
 Planned next, roughly in order:
 
 - Filter page and database lists
-- Configurable key bindings
 
 ---
 

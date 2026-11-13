@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -44,6 +45,21 @@ type Config struct {
 	DefaultDatabase string           `mapstructure:"default_database"` // Default database ID
 	Debug           bool             `mapstructure:"debug"`
 	CacheDir        string           `mapstructure:"cache_dir"`
+	// ReadOnly turns off everything that changes Notion.
+	ReadOnly bool `mapstructure:"readonly"`
+	// Theme is the colour style pages are drawn in; see Themes.
+	Theme string `mapstructure:"theme"`
+	// Keys gives actions other keys than the default: action name -> key.
+	// It is checked by the keymap package when the app starts.
+	Keys map[string]string `mapstructure:"keys"`
+}
+
+// ThemeAuto follows the terminal's background colour.
+const ThemeAuto = "auto"
+
+// Themes lists the values "theme" accepts.
+func Themes() []string {
+	return []string{ThemeAuto, "dark", "light", "dracula", "tokyo-night", "pink", "ascii", "notty"}
 }
 
 // Load reads configuration from viper and validates it.
@@ -104,6 +120,14 @@ func (c *Config) migrateLegacyConfig() error {
 func (c *Config) Validate() error {
 	if c.NotionToken == "" {
 		return errors.New("notion_token is required (set via --token flag, NOTION_TUI_NOTION_TOKEN env var, or config file)")
+	}
+
+	if c.Theme == "" {
+		c.Theme = ThemeAuto
+	}
+	c.Theme = strings.ToLower(c.Theme)
+	if !slices.Contains(Themes(), c.Theme) {
+		return fmt.Errorf("theme %q is not known (choose one of: %s)", c.Theme, strings.Join(Themes(), ", "))
 	}
 
 	// Database is now optional - users can use workspace search to discover content

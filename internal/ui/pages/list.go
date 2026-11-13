@@ -14,6 +14,7 @@ import (
 	"github.com/jomei/notionapi"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 )
@@ -121,6 +122,8 @@ type ListPage struct {
 	notionClient NotionClient
 	cache        *cache.PageCache
 	databaseID   string
+	readOnly     bool
+	keys         *keymap.Map
 
 	sort      rowSort
 	epoch     int             // Counts reloads, so a late "load more" of an older list is dropped
@@ -137,6 +140,10 @@ type NewListPageInput struct {
 	NotionClient NotionClient
 	Cache        *cache.PageCache
 	DatabaseID   string
+	// ReadOnly turns off creating rows.
+	ReadOnly bool
+	// Keys names the keys in hints; nil means the default keys.
+	Keys *keymap.Map
 }
 
 // NewListPage creates a new ListPage instance.
@@ -153,7 +160,7 @@ func NewListPage(input NewListPageInput) ListPage {
 	statusBar.SetWidth(input.Width)
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText("/: search | r: refresh | ?: help")
+	statusBar.SetHelpText(input.Keys.Label("{row_filter}: filter | {row_reload}: refresh | {help}: help"))
 
 	spinner := components.NewSpinner("Loading pages...")
 
@@ -173,6 +180,8 @@ func NewListPage(input NewListPageInput) ListPage {
 		notionClient: input.NotionClient,
 		cache:        input.Cache,
 		databaseID:   input.DatabaseID,
+		readOnly:     input.ReadOnly,
+		keys:         input.Keys,
 	}
 }
 
@@ -349,7 +358,7 @@ func (lp *ListPage) View() string {
 			Height(lp.height-1).
 			Align(lipgloss.Center, lipgloss.Center).
 			Foreground(lipgloss.Color("#6B7280"))
-		empty := emptyStyle.Render("This database has no pages. Press n to add one")
+		empty := emptyStyle.Render(lp.keys.Label("This database has no pages. Press {row_new} to add one"))
 		if lp.prompting {
 			// The prompt must be visible here too, or the user types blind
 			emptyStyle = emptyStyle.Height(lp.height - 2)
@@ -382,6 +391,11 @@ func (lp *ListPage) View() string {
 // startNewRow opens the title prompt for a new row.
 func (lp *ListPage) startNewRow() tea.Cmd {
 	if lp.loading || lp.creating {
+		return nil
+	}
+	if lp.readOnly {
+		lp.notice = ReadOnlyNotice
+		lp.statusBar.SetHelpText(ReadOnlyNotice)
 		return nil
 	}
 	input := textinput.New()
@@ -458,7 +472,7 @@ func (lp *ListPage) CapturesInput() bool {
 func (lp *ListPage) SetPages(pages []Page) {
 	lp.pageList = pages
 	lp.updateSidebarItems()
-	lp.statusBar.SetHelpText(fmt.Sprintf("%d pages | r: refresh", len(lp.pageList)))
+	lp.statusBar.SetHelpText(fmt.Sprintf("%d pages | %s: refresh", len(lp.pageList), lp.keys.Key("row_reload")))
 }
 
 // SelectedPage returns the currently selected page or nil if none selected.
@@ -739,9 +753,10 @@ func (lp *ListPage) updateStatusBarFromSidebar() {
 	case lp.notice != "":
 		lp.statusBar.SetHelpText(lp.notice)
 	case !lp.loading && !lp.loadingMore:
-		helpText := fmt.Sprintf("%d pages | enter: open | n: new | s: sort (%s) | /: filter | r: refresh", len(lp.pageList), lp.sort)
+		helpText := fmt.Sprintf("%d pages | enter: open | ", len(lp.pageList)) +
+			lp.keys.Label(fmt.Sprintf("{row_new}: new | {row_sort}: sort (%s) | {row_filter}: filter | {row_reload}: refresh", lp.sort))
 		if lp.hasMore {
-			helpText += " | m: load more"
+			helpText += lp.keys.Label(" | {row_more}: load more")
 		}
 		lp.statusBar.SetHelpText(helpText)
 	}

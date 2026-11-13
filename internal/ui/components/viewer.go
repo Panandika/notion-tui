@@ -251,8 +251,21 @@ func SetLightBackground(light bool) {
 	lightBackground.Store(light)
 }
 
-// markdownStyle returns the glamour style for the terminal's background.
+// theme is the style chosen in the config file; empty or "auto" follows the
+// terminal's background.
+var theme atomic.Value
+
+// SetTheme chooses the style pages are drawn in: one of glamour's standard
+// styles, or "auto". Call it once before the program starts.
+func SetTheme(name string) {
+	theme.Store(name)
+}
+
+// markdownStyle returns the glamour style to draw pages in.
 func markdownStyle() string {
+	if name, _ := theme.Load().(string); name != "" && name != "auto" {
+		return name
+	}
 	if lightBackground.Load() {
 		return "light"
 	}

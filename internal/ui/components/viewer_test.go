@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Panandika/notion-tui/internal/config"
 	"github.com/Panandika/notion-tui/internal/testhelpers"
 )
 
@@ -662,4 +663,17 @@ func TestPageViewer_FindSurvivesNewContent(t *testing.T) {
 	position, total := viewer.FindNext(1)
 	assert.Equal(t, 1, total, "matches are looked up in the new content")
 	assert.Equal(t, 1, position)
+}
+
+func TestThemes_AreStylesTheRendererKnows(t *testing.T) {
+	// Not parallel: the theme is process-wide.
+	t.Cleanup(func() { SetTheme("auto") })
+
+	for _, name := range config.Themes() {
+		SetTheme(name)
+		msg := renderMarkdown("# Title\n\ntext", 60)
+		loaded, ok := msg.(ContentLoadedMsg)
+		require.True(t, ok, "theme %s: %v", name, msg)
+		assert.Contains(t, loaded.Content(), "Title", "theme %s", name)
+	}
 }
