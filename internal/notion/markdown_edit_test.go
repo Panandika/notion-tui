@@ -177,3 +177,27 @@ func TestBuildContentUpdates_RandomPagesNeverLoseText(t *testing.T) {
 	// The property must not pass by always refusing.
 	assert.Greater(t, edits, replaces/4, "edits=%d replaces=%d", edits, replaces)
 }
+
+func TestEscapeMarkdown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "plain text is unchanged", text: "Plan for Q3", want: "Plan for Q3"},
+		{name: "emphasis markers", text: "*urgent* ~old~", want: `\*urgent\* \~old\~`},
+		{name: "brackets and tags", text: "[draft] <b>", want: `\[draft\] \<b\>`},
+		{name: "backslash", text: `a\b`, want: `a\\b`},
+		{name: "code, math, tables", text: "`x` $y$ a|b {c} 2^3", want: "\\`x\\` \\$y\\$ a\\|b \\{c\\} 2\\^3"},
+		{name: "unicode is untouched", text: "日本語 ☑", want: "日本語 ☑"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, EscapeMarkdown(tt.text))
+		})
+	}
+}

@@ -246,6 +246,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case pages.ListResultMsg:
+		// Rows loaded or created by the list page go to the list page,
+		// whichever page is in front.
+		if page, ok := m.pages[PageList]; ok {
+			updatedPage, cmd := page.Update(msg)
+			m.pages[PageList] = updatedPage
+			return m, cmd
+		}
+		return m, nil
+
 	case components.TreeNavigationMsg:
 		if m.pageBusy() {
 			return m, nil
@@ -358,7 +368,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				previousPage, ok := m.navigator.Back()
 				if ok {
 					m.currentPage = previousPage
-					return m, nil
+					return m, m.onReturnTo(previousPage)
 				}
 			}
 		}
@@ -421,7 +431,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			previousPage, ok := m.navigator.Back()
 			if ok {
 				m.currentPage = previousPage
-				return m, nil
+				return m, m.onReturnTo(previousPage)
 			}
 		}
 	}
@@ -796,6 +806,18 @@ func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea
 	default:
 		return nil
 	}
+}
+
+// onReturnTo runs when going back lands on a page. A database's rows are
+// reloaded, since the page just left may have changed one of them.
+func (m *AppModel) onReturnTo(pageID PageID) tea.Cmd {
+	if pageID != PageList {
+		return nil
+	}
+	if list, ok := m.pages[PageList].(*pages.ListPage); ok {
+		return list.Refresh()
+	}
+	return nil
 }
 
 // pageBusy reports whether the open page is in the middle of a save, create

@@ -162,7 +162,7 @@ func TestDetailPage_LoadsPageAsMarkdown(t *testing.T) {
 	fx := newDetailFixture(t, "Hello <b>world</b>")
 
 	assert.Equal(t, "Hello <b>world</b>", fx.page.Markdown(), "source markdown is kept as Notion returned it")
-	assert.Equal(t, "Hello **world**", fx.viewer.markdown, "viewer gets terminal markdown")
+	assert.Equal(t, "# My Page\n\n---\n\nHello **world**", fx.viewer.markdown, "viewer gets the title, then terminal markdown")
 	assert.Equal(t, "My Page", fx.page.Title())
 	assert.Equal(t, 0, fx.client.GetBlocksCallCount(), "nested blocks must not be fetched one by one")
 	assert.True(t, fx.viewer.initCalled)
@@ -219,20 +219,21 @@ func TestDetailPage_Cache(t *testing.T) {
 	}
 
 	_, firstViewer := open()
-	require.Equal(t, "from api", firstViewer.markdown)
+	require.Contains(t, firstViewer.markdown, "from api")
 	require.Len(t, client.GetPageMarkdownCalls, 1)
 
 	// Second open is served from the cache
 	client.PageMarkdownToReturn = &notion.PageMarkdown{Markdown: "changed in notion"}
 	dp, secondViewer := open()
-	assert.Equal(t, "from api", secondViewer.markdown)
+	assert.Contains(t, secondViewer.markdown, "from api")
+	assert.NotContains(t, secondViewer.markdown, "changed in notion")
 	assert.Len(t, client.GetPageMarkdownCalls, 1, "cache hit must not call the content API")
 
 	// Refresh bypasses the cache and updates it
 	dp.Update(dp.Refresh()())
 	assert.Equal(t, "changed in notion", dp.Markdown())
 	_, thirdViewer := open()
-	assert.Equal(t, "changed in notion", thirdViewer.markdown)
+	assert.Contains(t, thirdViewer.markdown, "changed in notion")
 }
 
 func TestDetailPage_IgnoresCacheEntriesInOldFormat(t *testing.T) {
@@ -251,7 +252,7 @@ func TestDetailPage_IgnoresCacheEntriesInOldFormat(t *testing.T) {
 
 	dp.Update(dp.Init()())
 
-	assert.Equal(t, "fresh", viewer.markdown)
+	assert.Contains(t, viewer.markdown, "fresh")
 }
 
 func TestDetailPage_Keys(t *testing.T) {
@@ -565,7 +566,7 @@ func TestDetailPage_NewPage_CreatesChildOfCurrentPage(t *testing.T) {
 	assert.Equal(t, newPageTemplate, fx.editor.seen)
 	require.Len(t, fx.client.CreatePageMarkdownCalls, 1)
 	call := fx.client.CreatePageMarkdownCalls[0]
-	assert.Equal(t, "page-1", call.ParentPageID)
+	assert.Equal(t, notion.PageParent{PageID: "page-1"}, call.Parent)
 	assert.Equal(t, "# Meeting notes\n\n- item", call.Markdown)
 	require.Len(t, escaped, 1)
 	assert.Equal(t, PageCreatedMsg{ID: "created-page-id"}, escaped[0])
@@ -588,7 +589,7 @@ func TestDetailPage_NewPage_FailureKeepsTheFile(t *testing.T) {
 
 	fx := newDetailFixture(t, "parent content")
 	fx.editor.write = func(string) string { return "# Draft\n\nlong text" }
-	fx.client.CreatePageMarkdownFunc = func(context.Context, string, string) (*notion.CreatedPage, error) {
+	fx.client.CreatePageMarkdownFunc = func(context.Context, notion.PageParent, string) (*notion.CreatedPage, error) {
 		return nil, errors.New("forbidden")
 	}
 

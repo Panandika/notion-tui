@@ -101,8 +101,19 @@ Press `?` in the app for the full key reference.
 |-----|--------|
 | `j` / `↓`, `k` / `↑` | Scroll |
 | `e` | Edit the page in your editor |
+| `p` | Change properties (database rows) |
+| `t` | Check or uncheck to-dos |
 | `Ctrl+N` | New page inside this page |
 | `r` | Reload from Notion |
+
+### Database rows
+| Key | Action |
+|-----|--------|
+| `Enter` | Open the row |
+| `n` | New row (asks for a title) |
+| `s` | Change sort order: Notion order, title, last edited |
+| `/` | Filter rows by title |
+| `r` | Reload |
 
 ### Command palette
 `Ctrl+P` opens it; move with `j` / `k`, filter with `/`, run with `Enter`. Commands: Search Workspace, Switch Database, Refresh, New Page, Export Page, Help, Quit.
@@ -130,9 +141,23 @@ export EDITOR="nvim"
 export EDITOR="code --wait"
 ```
 
+## Properties and to-dos
+
+A database row shows its title and properties above the content. Press `p` to change one:
+
+- **Status** and **select**: pick from the options defined in Notion. A select can also be cleared.
+- **Checkbox**: toggled directly.
+- **Date**: type `YYYY-MM-DD`, or leave empty to clear. Only a single date is edited; a time or end date on the property is replaced.
+
+Other property types (people, relations, formulas, multi-select and so on) are shown but not editable here.
+
+Press `t` on any page to list its to-dos and check or uncheck them with Space. Each change is sent on its own, without opening the editor.
+
 ## Creating pages
 
 `Ctrl+N` (or **New Page** in the palette) opens your editor with a template. The first `# heading` becomes the title. The page is created inside the page you are viewing. Leaving the template unchanged cancels.
+
+On a database's row list, `n` asks for a title and creates a new row.
 
 ## Exporting
 
@@ -170,8 +195,8 @@ Page content is cached under `~/.cache/notion-tui` for one hour. `r` on a page r
 
 ## Limitations
 
-- Database properties are not shown or editable yet.
-- Pages can be created inside pages, not as database rows.
+- Only status, select, date and checkbox properties can be changed.
+- Rows are sorted and filtered locally; Notion's saved views are not used.
 - Images are shown as links.
 - Columns are shown one after another.
 
@@ -375,8 +400,7 @@ Special thanks to:
 
 Planned next, roughly in order:
 
-- Show and edit page properties (status, select, date, checkbox)
-- Toggle to-dos and follow links to child pages from the page view
+- Follow links to child pages from the page view
 - Archive pages
 - Filter page and database lists
 - Configurable key bindings

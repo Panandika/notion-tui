@@ -19,7 +19,11 @@ type NotionClient interface {
 	GetPageMarkdown(ctx context.Context, id string) (*notion.PageMarkdown, error)
 	UpdatePageMarkdown(ctx context.Context, id string, updates []notion.ContentUpdate) (*notion.PageMarkdown, error)
 	ReplacePageMarkdown(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
-	CreatePageMarkdown(ctx context.Context, parentPageID, markdown string) (*notion.CreatedPage, error)
+	CreatePageMarkdown(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
+
+	// Page properties
+	GetDatabase(ctx context.Context, id string) (*notionapi.Database, error)
+	SetPageProperty(ctx context.Context, pageID string, update notion.PropertyUpdate) error
 
 	// Block operations
 	GetBlocks(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error)

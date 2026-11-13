@@ -402,3 +402,65 @@ func TestModel_EscWithTreeFocusedDoesNotReachTheList(t *testing.T) {
 
 	assert.Equal(t, view, m.pages[PageList].(*pages.ListPage).View(), "esc in the tree must not change the row list")
 }
+
+func TestModel_ListResultsReachTheListFromAnyPage(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	// A row is opened while the list reloads in the background
+	updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+	m = updated.(AppModel)
+	require.Equal(t, PageDetail, m.currentPage)
+
+	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(pages.NewPage("row-9", "Loaded in background", "", time.Now())))
+	m = updated.(AppModel)
+
+	assert.Contains(t, m.pages[PageList].(*pages.ListPage).View(), "Loaded in background")
+	assert.Equal(t, PageDetail, m.currentPage, "the open page keeps the screen")
+}
+
+func TestModel_ReturningToRowsReloadsThem(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+	m = updated.(AppModel)
+	updated, _ = m.Update(pages.NewLoadedMsgForTest("row-1", "content"))
+	m = updated.(AppModel)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+
+	require.Equal(t, PageList, m.currentPage)
+	assert.NotNil(t, cmd, "a property changed on the row must show in the list")
+}
+
+func TestModel_PageModesCaptureGlobalKeys(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+	m.navigateToDetail("page-1")
+	updated, _ := m.Update(pages.NewLoadedMsgForTest("page-1", "- [ ] a task\n\ntext"))
+	m = updated.(AppModel)
+
+	// "t" opens the to-do list; from then on q, ? and tab belong to it
+	updated, _ = m.Update(runeKey('t'))
+	m = updated.(AppModel)
+	detail := m.pages[PageDetail].(*pages.DetailPage)
+	require.True(t, detail.CapturesInput())
+
+	for _, key := range []tea.KeyMsg{runeKey('?'), {Type: tea.KeyTab}} {
+		updated, cmd := m.Update(key)
+		m = updated.(AppModel)
+		assert.False(t, isQuit(cmd))
+	}
+	assert.False(t, m.showHelp)
+	assert.False(t, m.sidebarFocus)
+	assert.True(t, detail.CapturesInput())
+
+	// esc closes the list rather than leaving the page
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+	assert.Equal(t, PageDetail, m.currentPage)
+	assert.False(t, detail.CapturesInput())
+}

@@ -3,14 +3,18 @@ package pages
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jomei/notionapi"
 
 	"github.com/Panandika/notion-tui/internal/cache"
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 )
 
@@ -20,6 +24,8 @@ type Page struct {
 	Title     string
 	Status    string
 	UpdatedAt time.Time
+	// Summary is a one-line digest of the row's properties.
+	Summary string
 }
 
 // NewPage creates a new Page instance.
@@ -55,6 +61,45 @@ type pagesLoadedMsg struct {
 	err        error
 }
 
+// rowCreatedMsg is the result of creating a new row.
+type rowCreatedMsg struct {
+	id  string
+	err error
+}
+
+// ListResultMsg marks the results of work a ListPage started. The root model
+// delivers these to the list page even when another page is in front, so
+// rows loaded in the background are not handed to the wrong page.
+type ListResultMsg interface {
+	listResult()
+}
+
+func (pagesLoadedMsg) listResult() {}
+func (rowCreatedMsg) listResult()  {}
+
+// rowSort is the order rows are shown in.
+type rowSort int
+
+const (
+	sortNotion  rowSort = iota // As Notion returns them
+	sortTitle                  // Title, A to Z
+	sortUpdated                // Most recently edited first
+)
+
+func (s rowSort) String() string {
+	switch s {
+	case sortTitle:
+		return "title"
+	case sortUpdated:
+		return "last edited"
+	default:
+		return "Notion order"
+	}
+}
+
+// summaryProperties is how many property values a row shows under its title.
+const summaryProperties = 3
+
 // ListPage wraps the Sidebar component with page listing logic.
 type ListPage struct {
 	sidebar      components.Sidebar
@@ -72,6 +117,12 @@ type ListPage struct {
 	notionClient NotionClient
 	cache        *cache.PageCache
 	databaseID   string
+
+	sort      rowSort
+	prompt    textinput.Model // Title prompt for a new row
+	prompting bool
+	creating  bool
+	notice    string // Result of the last action, shown in the status bar
 }
 
 // NewListPageInput contains the parameters for creating a new ListPage.
@@ -164,18 +215,52 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return lp, nil
 
 	case components.ItemSelectedMsg:
-		// Emit navigation message when an item is selected
-		lp.selectedIdx = msg.Index
+		// Emit navigation message when an item is selected. The index in
+		// the message is a position in the filtered, sorted list, so the row
+		// is looked up by ID.
+		lp.selectedIdx = -1
+		for index := range lp.pageList {
+			if lp.pageList[index].ID == msg.ID {
+				lp.selectedIdx = index
+				break
+			}
+		}
 		return lp, func() tea.Msg {
 			return NewNavigationMsg(msg.ID)
 		}
 
+	case rowCreatedMsg:
+		lp.creating = false
+		if msg.err != nil {
+			lp.statusBar.SetSyncStatus(components.StatusError)
+			lp.notice = "Could not create row: " + msg.err.Error()
+			lp.updateStatusBarFromSidebar()
+			return lp, nil
+		}
+		lp.statusBar.SetSyncStatus(components.StatusSynced)
+		created := PageCreatedMsg{ID: msg.id}
+		// Open the new row, and reload the list so it is there on return
+		return lp, tea.Batch(func() tea.Msg { return created }, lp.fetchPagesCmd())
+
 	case tea.KeyMsg:
+		if lp.prompting {
+			return lp, lp.updatePrompt(msg)
+		}
 		// While the filter is being typed, letters are filter text
 		if lp.CapturesInput() {
 			break
 		}
+		lp.notice = ""
 		switch msg.String() {
+		case "n":
+			return lp, lp.startNewRow()
+
+		case "s":
+			lp.sort = (lp.sort + 1) % 3
+			lp.updateSidebarItems()
+			lp.updateStatusBarFromSidebar()
+			return lp, nil
+
 		case "r":
 			// Refresh page list
 			lp.loading = true
@@ -270,11 +355,70 @@ func (lp *ListPage) View() string {
 	// The list has a minimum size of its own (title, counters, help), so it
 	// is cut to the page: on a small terminal an oversized view would push
 	// the top of the screen out of sight.
+	rowsHeight := lp.height - 1
+	var promptLine string
+	if lp.prompting {
+		rowsHeight--
+		promptLine = lipgloss.NewStyle().MaxWidth(lp.width).Render(lp.prompt.View())
+	}
 	rows := lipgloss.NewStyle().
 		MaxWidth(lp.width).
-		MaxHeight(lp.height - 1).
+		MaxHeight(rowsHeight).
 		Render(lp.sidebar.View())
+	if lp.prompting {
+		return lipgloss.JoinVertical(lipgloss.Left, rows, promptLine, status)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows, status)
+}
+
+// startNewRow opens the title prompt for a new row.
+func (lp *ListPage) startNewRow() tea.Cmd {
+	if lp.loading || lp.creating {
+		return nil
+	}
+	input := textinput.New()
+	input.Prompt = "New row title: "
+	input.CharLimit = 200
+	input.Focus()
+	lp.prompt = input
+	lp.prompting = true
+	lp.statusBar.SetHelpText("enter: create | esc: cancel")
+	return textinput.Blink
+}
+
+// updatePrompt handles a key while the new-row prompt is open.
+func (lp *ListPage) updatePrompt(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		lp.prompting = false
+		lp.updateStatusBarFromSidebar()
+		return nil
+	case "enter":
+		title := strings.TrimSpace(lp.prompt.Value())
+		lp.prompting = false
+		if title == "" {
+			lp.updateStatusBarFromSidebar()
+			return nil
+		}
+		lp.creating = true
+		lp.statusBar.SetSyncStatus(components.StatusSyncing)
+		lp.statusBar.SetHelpText("Creating row...")
+
+		client := lp.notionClient
+		parent := notion.PageParent{DatabaseID: lp.databaseID}
+		// The first heading of the Markdown becomes the row's title
+		markdown := "# " + notion.EscapeMarkdown(title)
+		return func() tea.Msg {
+			created, err := client.CreatePageMarkdown(context.Background(), parent, markdown)
+			if err != nil {
+				return rowCreatedMsg{err: err}
+			}
+			return rowCreatedMsg{id: created.ID}
+		}
+	}
+	var cmd tea.Cmd
+	lp.prompt, cmd = lp.prompt.Update(msg)
+	return cmd
 }
 
 // listChrome is the number of rows around the row list: the page status bar
@@ -293,7 +437,7 @@ func listHeight(pageHeight int) int {
 // CapturesInput reports whether the row filter is being typed, in which
 // case key presses are filter text rather than shortcuts.
 func (lp *ListPage) CapturesInput() bool {
-	return lp.sidebar.FilterState() == list.Filtering
+	return lp.prompting || lp.sidebar.FilterState() == list.Filtering
 }
 
 // SetPages updates the page list and sidebar items.
@@ -336,16 +480,7 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 
 		pages := make([]Page, 0, len(resp.Results))
 		for _, p := range resp.Results {
-			title := extractTitle(&p)
-			status := extractStatus(&p)
-
-			page := NewPage(
-				string(p.ID),
-				title,
-				status,
-				p.LastEditedTime,
-			)
-			pages = append(pages, page)
+			pages = append(pages, rowFromPage(&p))
 		}
 
 		return pagesLoadedMsg{
@@ -387,16 +522,7 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 
 		pages := make([]Page, 0, len(resp.Results))
 		for _, p := range resp.Results {
-			title := extractTitle(&p)
-			status := extractStatus(&p)
-
-			page := NewPage(
-				string(p.ID),
-				title,
-				status,
-				p.LastEditedTime,
-			)
-			pages = append(pages, page)
+			pages = append(pages, rowFromPage(&p))
 		}
 
 		return pagesLoadedMsg{
@@ -409,10 +535,14 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 
 // updateSidebarItems converts the page list to sidebar items.
 func (lp *ListPage) updateSidebarItems() {
-	items := make([]components.Item, 0, len(lp.pageList))
-	for _, page := range lp.pageList {
+	rows := lp.sortedRows()
+	items := make([]components.Item, 0, len(rows))
+	for _, page := range rows {
 		desc := fmt.Sprintf("Updated: %s", formatTime(page.UpdatedAt))
-		if page.Status != "" {
+		switch {
+		case page.Summary != "":
+			desc = fmt.Sprintf("%s | %s", page.Summary, desc)
+		case page.Status != "":
 			desc = fmt.Sprintf("%s | %s", page.Status, desc)
 		}
 
@@ -421,6 +551,59 @@ func (lp *ListPage) updateSidebarItems() {
 	}
 
 	lp.sidebar.SetItems(items)
+}
+
+// sortedRows returns the rows in the chosen order without changing the
+// order they were loaded in.
+func (lp *ListPage) sortedRows() []Page {
+	rows := append([]Page(nil), lp.pageList...)
+	switch lp.sort {
+	case sortTitle:
+		sort.SliceStable(rows, func(i, j int) bool {
+			return strings.ToLower(rows[i].Title) < strings.ToLower(rows[j].Title)
+		})
+	case sortUpdated:
+		sort.SliceStable(rows, func(i, j int) bool {
+			return rows[i].UpdatedAt.After(rows[j].UpdatedAt)
+		})
+	}
+	return rows
+}
+
+// rowFromPage builds a list row from a database page.
+func rowFromPage(page *notionapi.Page) Page {
+	row := NewPage(string(page.ID), notion.PageTitle(page), extractStatus(page), page.LastEditedTime)
+	row.Summary = rowSummary(page)
+	return row
+}
+
+// rowSummary lists a row's first few set properties: values alone for the
+// self-explanatory kinds, "name: value" for the rest.
+func rowSummary(page *notionapi.Page) string {
+	var parts []string
+	for _, property := range notion.PageProperties(page) {
+		if len(parts) == summaryProperties {
+			break
+		}
+		switch property.Type {
+		case notionapi.PropertyTypeCheckbox:
+			if property.Checked {
+				parts = append(parts, "☑ "+property.Name)
+			}
+		case notionapi.PropertyTypeStatus, notionapi.PropertyTypeSelect, notionapi.PropertyTypeDate:
+			if property.Text != "" {
+				parts = append(parts, property.Text)
+			}
+		case notionapi.PropertyTypeCreatedTime, notionapi.PropertyTypeLastEditedTime,
+			notionapi.PropertyTypeCreatedBy, notionapi.PropertyTypeLastEditedBy:
+			// The row already shows when it was updated.
+		default:
+			if property.Text != "" {
+				parts = append(parts, property.Name+": "+property.Text)
+			}
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // extractTitle extracts the title from a Notion page.
@@ -514,15 +697,18 @@ func (lp *ListPage) IsLoadingMore() bool {
 
 // updateStatusBarFromSidebar updates the status bar based on sidebar search state.
 func (lp *ListPage) updateStatusBarFromSidebar() {
-	if lp.sidebar.IsFiltering() {
+	switch {
+	case lp.prompting || lp.creating:
+		// The prompt and the create action set their own text.
+	case lp.sidebar.IsFiltering():
 		filter := lp.sidebar.FilterValue()
 		visible := lp.sidebar.VisibleItemCount()
 		total := len(lp.pageList)
-		helpText := fmt.Sprintf("Filter: %s | %d/%d pages | ESC: clear", filter, visible, total)
-		lp.statusBar.SetHelpText(helpText)
-	} else if !lp.loading && !lp.loadingMore {
-		// Restore normal help text
-		helpText := fmt.Sprintf("%d pages | enter: open | /: filter | r: refresh", len(lp.pageList))
+		lp.statusBar.SetHelpText(fmt.Sprintf("Filter: %s | %d/%d pages | ESC: clear", filter, visible, total))
+	case lp.notice != "":
+		lp.statusBar.SetHelpText(lp.notice)
+	case !lp.loading && !lp.loadingMore:
+		helpText := fmt.Sprintf("%d pages | enter: open | n: new | s: sort (%s) | /: filter | r: refresh", len(lp.pageList), lp.sort)
 		if lp.hasMore {
 			helpText += " | m: load more"
 		}

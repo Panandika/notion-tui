@@ -239,3 +239,35 @@ func diffHunks(oldLines, newLines []string) []hunk {
 	}
 	return hunks
 }
+
+// markdownSpecials are the characters Notion-flavored Markdown treats as
+// syntax outside code.
+const markdownSpecials = "\\*~`$[]<>{}|^"
+
+// EscapeMarkdown makes plain text safe to place in Notion-flavored Markdown,
+// so that characters like * or [ are kept as typed instead of being read as
+// formatting.
+func EscapeMarkdown(text string) string {
+	var sb strings.Builder
+	for _, r := range text {
+		if strings.ContainsRune(markdownSpecials, r) {
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// UnescapeMarkdown reverses EscapeMarkdown: a backslash before a Markdown
+// special character is dropped, giving the text as the user means it.
+func UnescapeMarkdown(text string) string {
+	var sb strings.Builder
+	runes := []rune(text)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\\' && i+1 < len(runes) && strings.ContainsRune(markdownSpecials, runes[i+1]) {
+			i++
+		}
+		sb.WriteRune(runes[i])
+	}
+	return sb.String()
+}

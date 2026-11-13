@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jomei/notionapi"
@@ -24,7 +25,7 @@ import (
 type ViewerInterface = components.ViewerInterface
 
 const (
-	detailHelpText = "e: edit | r: refresh | esc: back | ?: help"
+	detailHelpText = "e: edit | p: properties | t: to-dos | r: refresh | esc: back | ?: help"
 
 	// cacheFormat marks cache entries written by this version of the page
 	// loader. Entries without it (older block caches) are ignored.
@@ -153,7 +154,18 @@ type DetailPage struct {
 	session   *editSession
 	quickExit time.Duration // See quickExitThreshold
 	busy      bool          // An edit, save, create or export is in progress
-	notice    string        // One-off message shown in the status bar
+
+	// Modes shown in place of the page view (see detail_modes.go)
+	mode       detailMode
+	picker     components.Picker
+	schema     *notionapi.Database  // Database that defines this page's properties
+	editing    notion.PropertyValue // Property being changed
+	options    []string             // Choices shown for that property
+	propCursor int                  // Row to return to in the property list
+	dateInput  textinput.Model
+	todos      []todoItem
+	inputErr   string // Problem with the last input or save, shown in the mode
+	notice     string // One-off message shown in the status bar
 }
 
 // NewDetailPageInput contains the parameters for creating a DetailPage.
@@ -245,6 +257,16 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pageCreatedResultMsg:
 		return dp, dp.handlePageCreated(msg)
 
+	case schemaLoadedMsg:
+		dp.handleSchemaLoaded(msg)
+		return dp, nil
+
+	case propertySavedMsg:
+		return dp, dp.handlePropertySaved(msg)
+
+	case todoSavedMsg:
+		return dp, dp.handleTodoSaved(msg)
+
 	case exportDoneMsg:
 		if msg.pageID != dp.pageID {
 			return dp, nil
@@ -261,6 +283,11 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return dp, nil
 
 	case tea.KeyMsg:
+		// Properties, options, date prompt and to-dos take every key
+		if dp.mode != modeView {
+			return dp, dp.updateMode(msg)
+		}
+
 		// Any key acknowledges the last notice
 		dp.clearNotice()
 
@@ -271,6 +298,12 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "e":
 			return dp, dp.StartEdit()
+
+		case "p":
+			return dp, dp.StartProperties()
+
+		case "t":
+			return dp, dp.StartTodos()
 
 		case "esc":
 			// Navigate back (use exported BackNavigationMsg)
@@ -315,6 +348,10 @@ func (dp *DetailPage) View() string {
 		errorText := fmt.Sprintf("Error: %v\nPress ESC to go back", dp.err)
 		statusContent := dp.statusBar.View()
 		return lipgloss.JoinVertical(lipgloss.Left, errorText, statusContent)
+	}
+
+	if dp.mode != modeView {
+		return lipgloss.JoinVertical(lipgloss.Left, dp.renderMode(), dp.statusBar.View())
 	}
 
 	// A message too long for the status bar gets the whole page until the
@@ -498,40 +535,12 @@ func (dp *DetailPage) handleEditorClosed(msg editorClosedMsg) tea.Cmd {
 	return dp.savePageCmd(session.original, edited)
 }
 
-// savePageCmd writes the edited page. Only the changed parts are sent, so
-// untouched blocks keep their identity; a rewrite of the whole page is used
-// when the change cannot be expressed as separate edits.
+// savePageCmd writes the page as edited in the editor.
 func (dp *DetailPage) savePageCmd(original, edited string) tea.Cmd {
 	pageID := dp.pageID
 	client := dp.notionClient
 	return func() tea.Msg {
-		ctx := context.Background()
-
-		updates, ok := notion.BuildContentUpdates(original, edited)
-		var (
-			result *notion.PageMarkdown
-			err    error
-		)
-		if ok {
-			// Edits locate their text in the page, so they fail on their own
-			// if that text changed in Notion meanwhile.
-			result, err = client.UpdatePageMarkdown(ctx, pageID, updates)
-			if isNoMatchError(err) {
-				err = errPageChanged
-			}
-		} else {
-			// A full replace has no such protection: check first that the
-			// page is still what the editor started from.
-			current, fetchErr := client.GetPageMarkdown(ctx, pageID)
-			switch {
-			case fetchErr != nil:
-				err = fetchErr
-			case current.Truncated || notion.NormalizeMarkdown(current.Markdown) != notion.NormalizeMarkdown(original):
-				err = errPageChanged
-			default:
-				result, err = client.ReplacePageMarkdown(ctx, pageID, edited)
-			}
-		}
+		result, err := writePageMarkdown(context.Background(), client, pageID, original, edited)
 		if err != nil {
 			return editSavedMsg{pageID: pageID, err: err}
 		}
@@ -560,7 +569,7 @@ func (dp *DetailPage) createPageCmd(markdown string) tea.Cmd {
 	parentID := dp.pageID
 	client := dp.notionClient
 	return func() tea.Msg {
-		created, err := client.CreatePageMarkdown(context.Background(), parentID, markdown)
+		created, err := client.CreatePageMarkdown(context.Background(), notion.PageParent{PageID: parentID}, markdown)
 		if err != nil {
 			return pageCreatedResultMsg{pageID: parentID, err: err}
 		}
@@ -647,6 +656,14 @@ func (dp *DetailPage) showMarkdown(markdown string, truncated bool) tea.Cmd {
 	display := notion.RenderableMarkdown(markdown)
 	if truncated {
 		display = strings.TrimSpace(display + "\n\n" + truncatedNotice)
+	}
+	// Title and properties sit above the content, separated by a rule.
+	if header := pageHeader(dp.page); header != "" {
+		if display == "" {
+			display = header
+		} else {
+			display = header + "\n\n---\n\n" + display
+		}
 	}
 	return dp.viewer.SetMarkdown(display)
 }
@@ -802,10 +819,11 @@ func (dp *DetailPage) Busy() bool {
 	return dp.busy
 }
 
-// CapturesInput reports whether the page needs every key press. The detail
-// page never does: while the editor runs, the TUI itself is suspended.
+// CapturesInput reports whether the page needs every key press, which is
+// the case while a property, option, date or to-do list is open. (While the
+// external editor runs, the TUI itself is suspended.)
 func (dp *DetailPage) CapturesInput() bool {
-	return false
+	return dp.mode != modeView
 }
 
 // PageID returns the current page ID.
