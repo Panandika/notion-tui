@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jomei/notionapi"
@@ -108,19 +109,71 @@ func (c *Client) ReplacePageMarkdown(ctx context.Context, id, markdown string) (
 	return &out, nil
 }
 
-// CreatePageMarkdown creates a child page under parentPageID. Without a title
-// property the first "# heading" of the Markdown becomes the page title.
-func (c *Client) CreatePageMarkdown(ctx context.Context, parentPageID, markdown string) (*CreatedPage, error) {
-	body := map[string]any{
-		"markdown_version": markdownFormat,
-		"parent":           map[string]any{"page_id": parentPageID},
-		"markdown":         markdown,
+// PageParent says where a new page goes: inside a page, or as a row of a
+// database. Exactly one field is set.
+type PageParent struct {
+	PageID     string
+	DatabaseID string
+}
+
+func (p PageParent) body() (map[string]any, error) {
+	switch {
+	case p.PageID != "" && p.DatabaseID == "":
+		return map[string]any{"page_id": p.PageID}, nil
+	case p.DatabaseID != "" && p.PageID == "":
+		return map[string]any{"database_id": p.DatabaseID}, nil
+	default:
+		return nil, errors.New("a new page needs exactly one parent: a page or a database")
 	}
+}
+
+// CreatePageMarkdown creates a page under parent from Markdown written by
+// the user. A leading "# heading" is the page title (the title property, for
+// a database row) and the rest is the content.
+//
+// The title is always sent explicitly. Notion only derives it from the
+// heading when body text follows; a heading on its own would be left in the
+// content and the page would have no title.
+func (c *Client) CreatePageMarkdown(ctx context.Context, parent PageParent, markdown string) (*CreatedPage, error) {
+	parentBody, err := parent.body()
+	if err != nil {
+		return nil, fmt.Errorf("create page: %w", err)
+	}
+
+	body := map[string]any{"parent": parentBody}
+	title, content := SplitTitle(markdown)
+	if title != "" {
+		body["properties"] = map[string]any{
+			"title": map[string]any{"title": []map[string]any{{"text": map[string]any{"content": title}}}},
+		}
+	}
+	if strings.TrimSpace(content) != "" {
+		body["markdown"] = content
+		body["markdown_version"] = markdownFormat
+	}
+
 	var out CreatedPage
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/pages", nil, body, &out); err != nil {
-		return nil, fmt.Errorf("create page under %s: %w", parentPageID, err)
+		return nil, fmt.Errorf("create page: %w", err)
 	}
 	return &out, nil
+}
+
+// SplitTitle separates a leading "# heading" from the rest of the Markdown.
+// The title is returned as plain text; without such a heading it is empty
+// and content is the whole text.
+func SplitTitle(markdown string) (title, content string) {
+	text := NormalizeMarkdown(markdown)
+	trimmed := strings.TrimLeft(text, "\n")
+	first, rest, _ := strings.Cut(trimmed, "\n")
+	if !strings.HasPrefix(first, "# ") {
+		return "", text
+	}
+	title = strings.TrimSpace(UnescapeMarkdown(strings.TrimPrefix(first, "# ")))
+	if title == "" {
+		return "", text
+	}
+	return title, strings.TrimLeft(rest, "\n")
 }
 
 func markdownPath(pageID string) string {

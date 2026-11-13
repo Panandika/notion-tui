@@ -11,3 +11,10 @@ import tea "github.com/charmbracelet/bubbletea"
 func NewLoadedMsgForTest(pageID, markdown string) tea.Msg {
 	return pageLoadedMsg{pageID: pageID, markdown: markdown}
 }
+
+// NewRowsLoadedMsgForTest builds the message a ListPage receives when its
+// rows have loaded. Not for use outside tests, for the same reason as
+// NewLoadedMsgForTest.
+func NewRowsLoadedMsgForTest(rows ...Page) tea.Msg {
+	return pagesLoadedMsg{pages: rows}
+}

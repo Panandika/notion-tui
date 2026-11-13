@@ -124,7 +124,7 @@ func TestCreatePageMarkdown(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"page","id":"new-page","url":"https://notion.so/new-page"}`))
 	})
 
-	page, err := client.CreatePageMarkdown(context.Background(), "parent-1", "# Title\n\nbody")
+	page, err := client.CreatePageMarkdown(context.Background(), PageParent{PageID: "parent-1"}, "# Title\n\nbody")
 
 	require.NoError(t, err)
 	assert.Equal(t, "new-page", page.ID)
@@ -132,7 +132,8 @@ func TestCreatePageMarkdown(t *testing.T) {
 	assert.Equal(t, http.MethodPost, req.method)
 	assert.Equal(t, "/v1/pages", req.path)
 	assert.Equal(t, map[string]any{"page_id": "parent-1"}, req.body["parent"])
-	assert.Equal(t, "# Title\n\nbody", req.body["markdown"])
+	assert.Equal(t, "body", req.body["markdown"], "the heading is sent as the title, not as content")
+	assert.Equal(t, "Title", titleOf(t, req.body))
 }
 
 func TestMarkdownCall_ReturnsAPIError(t *testing.T) {
@@ -236,4 +237,90 @@ func TestPageTitle(t *testing.T) {
 			assert.Equal(t, tt.want, PageTitle(tt.page))
 		})
 	}
+}
+
+// titleOf returns the title text of a create-page request body.
+func titleOf(t *testing.T, body map[string]any) string {
+	t.Helper()
+	properties, ok := body["properties"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	title := properties["title"].(map[string]any)["title"].([]any)
+	require.Len(t, title, 1)
+	return title[0].(map[string]any)["text"].(map[string]any)["content"].(string)
+}
+
+func TestSplitTitle(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		markdown    string
+		wantTitle   string
+		wantContent string
+	}{
+		{name: "heading and body", markdown: "# Notes\n\nfirst line\n", wantTitle: "Notes", wantContent: "first line"},
+		{name: "heading only", markdown: "# Notes\n", wantTitle: "Notes", wantContent: ""},
+		{name: "blank lines before the heading", markdown: "\n\n# Notes\nbody", wantTitle: "Notes", wantContent: "body"},
+		{name: "escaped characters are plain text in the title", markdown: `# Plan \[draft\] \*x\*`, wantTitle: "Plan [draft] *x*", wantContent: ""},
+		{name: "no heading", markdown: "just text\nmore", wantTitle: "", wantContent: "just text\nmore"},
+		{name: "second-level heading is content", markdown: "## Sub\nbody", wantTitle: "", wantContent: "## Sub\nbody"},
+		{name: "empty heading is not a title", markdown: "# \nbody", wantTitle: "", wantContent: "# \nbody"},
+		{name: "later headings stay in the content", markdown: "# One\n\n# Two\ntext", wantTitle: "One", wantContent: "# Two\ntext"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			title, content := SplitTitle(tt.markdown)
+			assert.Equal(t, tt.wantTitle, title)
+			assert.Equal(t, tt.wantContent, content)
+		})
+	}
+}
+
+func TestCreatePageMarkdown_TitleIsAlwaysExplicit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		markdown     string
+		wantTitle    string
+		wantMarkdown any // nil when no content is sent
+	}{
+		// Notion leaves a lone heading in the content and the title empty,
+		// so the heading must be sent as the title.
+		{name: "heading only", markdown: "# Meeting notes", wantTitle: "Meeting notes", wantMarkdown: nil},
+		{name: "heading and body", markdown: "# Meeting notes\n\n- item", wantTitle: "Meeting notes", wantMarkdown: "- item"},
+		{name: "no heading", markdown: "- item", wantTitle: "", wantMarkdown: "- item"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, requests := newMarkdownTestClient(t, func(w http.ResponseWriter, _ int) {
+				_, _ = w.Write([]byte(`{"object":"page","id":"new"}`))
+			})
+
+			_, err := client.CreatePageMarkdown(context.Background(), PageParent{PageID: "p"}, tt.markdown)
+
+			require.NoError(t, err)
+			body := (*requests)[0].body
+			assert.Equal(t, tt.wantTitle, titleOf(t, body))
+			assert.Equal(t, tt.wantMarkdown, body["markdown"])
+			if tt.wantMarkdown == nil {
+				assert.NotContains(t, body, "markdown_version", "the version is only valid together with markdown")
+			}
+		})
+	}
+}
+
+func TestEscapeUnescapeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{"Plan [draft] *x* q?", `a\b`, "`x` $y$ a|b {c} 2^3 <tag>", "plain", ""} {
+		assert.Equal(t, text, UnescapeMarkdown(EscapeMarkdown(text)))
+	}
+	assert.Equal(t, `keep \n as is`, UnescapeMarkdown(`keep \n as is`), "a backslash before an ordinary character is kept")
 }

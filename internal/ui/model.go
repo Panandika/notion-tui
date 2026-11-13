@@ -246,6 +246,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case pages.ListResultMsg:
+		// Rows loaded or created by the list page go to the list page,
+		// whichever page is in front.
+		if page, ok := m.pages[PageList]; ok {
+			updatedPage, cmd := page.Update(msg)
+			m.pages[PageList] = updatedPage
+			return m, cmd
+		}
+		return m, nil
+
 	case components.TreeNavigationMsg:
 		if m.pageBusy() {
 			return m, nil
@@ -298,7 +308,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.resizePages()
 
 		case "ctrl+p":
-			// Toggle command palette (works everywhere)
+			// Not over a property list, to-do list or prompt: a palette
+			// command would change or leave the page underneath it.
+			if m.pageInMode() {
+				return m, nil
+			}
+			// Toggle command palette (works everywhere else)
 			m.cmdPalette.Toggle()
 			m.showPalette = m.cmdPalette.IsOpen()
 			return m, nil
@@ -358,7 +373,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				previousPage, ok := m.navigator.Back()
 				if ok {
 					m.currentPage = previousPage
-					return m, nil
+					return m, m.onReturnTo(previousPage)
 				}
 			}
 		}
@@ -383,8 +398,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case pages.PageCreatedMsg:
-		// Open the new page and reload the tree so it shows up there
-		return m, tea.Batch(m.navigateToDetail(msg.ID), m.fetchWorkspaceTreeCmd())
+		// The tree gains an entry either way
+		reloadTree := m.fetchWorkspaceTreeCmd()
+		// Open the new page only if the user is still where it was created
+		// and nothing there is mid-save; otherwise it must not take over.
+		if !m.createdWhereUserIs(msg) || m.pageBusy() {
+			return m, reloadTree
+		}
+		return m, tea.Batch(m.navigateToDetail(msg.ID), reloadTree)
 
 	case components.CommandExecutedMsg:
 		// Command palette executed a command
@@ -421,7 +442,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			previousPage, ok := m.navigator.Back()
 			if ok {
 				m.currentPage = previousPage
-				return m, nil
+				return m, m.onReturnTo(previousPage)
 			}
 		}
 	}
@@ -796,6 +817,41 @@ func (m *AppModel) handleCommandExecution(msg components.CommandExecutedMsg) tea
 	default:
 		return nil
 	}
+}
+
+// modalPage is implemented by pages that can show a list or prompt in place
+// of their content.
+type modalPage interface {
+	InMode() bool
+}
+
+// pageInMode reports whether the current page has such a list or prompt open.
+func (m *AppModel) pageInMode() bool {
+	page, ok := m.pages[m.currentPage].(modalPage)
+	return ok && page.InMode()
+}
+
+// createdWhereUserIs reports whether the user is still on the page a new
+// page was created from: the row list for a new row, the parent page for a
+// new child page.
+func (m *AppModel) createdWhereUserIs(msg pages.PageCreatedMsg) bool {
+	if msg.ParentPageID == "" {
+		return m.currentPage == PageList
+	}
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	return ok && m.currentPage == PageDetail && detail.PageID() == msg.ParentPageID
+}
+
+// onReturnTo runs when going back lands on a page. A database's rows are
+// reloaded, since the page just left may have changed one of them.
+func (m *AppModel) onReturnTo(pageID PageID) tea.Cmd {
+	if pageID != PageList {
+		return nil
+	}
+	if list, ok := m.pages[PageList].(*pages.ListPage); ok {
+		return list.Refresh()
+	}
+	return nil
 }
 
 // pageBusy reports whether the open page is in the middle of a save, create

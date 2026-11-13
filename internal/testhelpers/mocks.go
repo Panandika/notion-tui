@@ -32,7 +32,12 @@ type MockNotionClient struct {
 	GetPageMarkdownFunc      func(ctx context.Context, id string) (*notion.PageMarkdown, error)
 	UpdatePageMarkdownFunc   func(ctx context.Context, id string, updates []notion.ContentUpdate) (*notion.PageMarkdown, error)
 	ReplacePageMarkdownFunc  func(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
-	CreatePageMarkdownFunc   func(ctx context.Context, parentPageID, markdown string) (*notion.CreatedPage, error)
+	CreatePageMarkdownFunc   func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
+	DatabaseSchemaToReturn   *notionapi.Database
+	GetDatabaseFunc          func(ctx context.Context, id string) (*notionapi.Database, error)
+	SetPagePropertyFunc      func(ctx context.Context, pageID string, update notion.PropertyUpdate) error
+	GetDatabaseCalls         []string
+	SetPagePropertyCalls     []SetPagePropertyCall
 	GetPageMarkdownCalls     []string
 	UpdatePageMarkdownCalls  []UpdatePageMarkdownCall
 	ReplacePageMarkdownCalls []ReplacePageMarkdownCall

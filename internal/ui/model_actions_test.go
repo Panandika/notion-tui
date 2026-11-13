@@ -132,7 +132,7 @@ func TestModel_PageCreatedOpensTheNewPage(t *testing.T) {
 	m := newActionTestModel(t)
 	m.navigateToDetail("parent-page")
 
-	updated, cmd := m.Update(pages.PageCreatedMsg{ID: "new-page-id"})
+	updated, cmd := m.Update(pages.PageCreatedMsg{ID: "new-page-id", ParentPageID: "parent-page"})
 	m = updated.(AppModel)
 
 	assert.Equal(t, PageDetail, m.currentPage)
@@ -360,9 +360,9 @@ func listModel(t *testing.T) AppModel {
 	updated, _ := m.Update(pages.DatabaseSelectedMsg{DatabaseID: "db"})
 	m = updated.(AppModel)
 	require.Equal(t, PageList, m.currentPage)
-	list := m.pages[PageList].(*pages.ListPage)
-	list.SetPages([]pages.Page{pages.NewPage("row-1", "Quarterly report", "", time.Now())})
-	return m
+	// Deliver the rows the way a finished load does
+	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(pages.NewPage("row-1", "Quarterly report", "", time.Now())))
+	return updated.(AppModel)
 }
 
 func TestModel_RowFilterTypingIsNotGlobalShortcuts(t *testing.T) {
@@ -401,4 +401,148 @@ func TestModel_EscWithTreeFocusedDoesNotReachTheList(t *testing.T) {
 	m = updated.(AppModel)
 
 	assert.Equal(t, view, m.pages[PageList].(*pages.ListPage).View(), "esc in the tree must not change the row list")
+}
+
+func TestModel_ListResultsReachTheListFromAnyPage(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	// A row is opened while the list reloads in the background
+	updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+	m = updated.(AppModel)
+	require.Equal(t, PageDetail, m.currentPage)
+
+	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(pages.NewPage("row-9", "Loaded in background", "", time.Now())))
+	m = updated.(AppModel)
+
+	assert.Contains(t, m.pages[PageList].(*pages.ListPage).View(), "Loaded in background")
+	assert.Equal(t, PageDetail, m.currentPage, "the open page keeps the screen")
+}
+
+func TestModel_ReturningToRowsReloadsThem(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+	m = updated.(AppModel)
+	updated, _ = m.Update(pages.NewLoadedMsgForTest("row-1", "content"))
+	m = updated.(AppModel)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+
+	require.Equal(t, PageList, m.currentPage)
+	assert.NotNil(t, cmd, "a property changed on the row must show in the list")
+}
+
+func TestModel_PageModesCaptureGlobalKeys(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+	m.navigateToDetail("page-1")
+	updated, _ := m.Update(pages.NewLoadedMsgForTest("page-1", "- [ ] a task\n\ntext"))
+	m = updated.(AppModel)
+
+	// "t" opens the to-do list; from then on q, ? and tab belong to it
+	updated, _ = m.Update(runeKey('t'))
+	m = updated.(AppModel)
+	detail := m.pages[PageDetail].(*pages.DetailPage)
+	require.True(t, detail.CapturesInput())
+
+	for _, key := range []tea.KeyMsg{runeKey('?'), {Type: tea.KeyTab}} {
+		updated, cmd := m.Update(key)
+		m = updated.(AppModel)
+		assert.False(t, isQuit(cmd))
+	}
+	assert.False(t, m.showHelp)
+	assert.False(t, m.sidebarFocus)
+	assert.True(t, detail.CapturesInput())
+
+	// esc closes the list rather than leaving the page
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+	assert.Equal(t, PageDetail, m.currentPage)
+	assert.False(t, detail.CapturesInput())
+}
+
+func TestModel_PageCreatedDoesNotTakeOverWhenUserMovedOn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("row created, but the user has opened another row meanwhile", func(t *testing.T) {
+		t.Parallel()
+		m := listModel(t)
+		updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+		m = updated.(AppModel)
+
+		updated, cmd := m.Update(pages.PageCreatedMsg{ID: "new-row"})
+		m = updated.(AppModel)
+
+		assert.Equal(t, "row-1", m.pages[PageDetail].(*pages.DetailPage).PageID(), "the open row keeps the screen")
+		assert.NotNil(t, cmd, "the tree still reloads")
+	})
+
+	t.Run("row created while the user is still on the list", func(t *testing.T) {
+		t.Parallel()
+		m := listModel(t)
+
+		updated, _ := m.Update(pages.PageCreatedMsg{ID: "new-row"})
+		m = updated.(AppModel)
+
+		require.Equal(t, PageDetail, m.currentPage)
+		assert.Equal(t, "new-row", m.pages[PageDetail].(*pages.DetailPage).PageID())
+	})
+
+	t.Run("child page created, but another page is open now", func(t *testing.T) {
+		t.Parallel()
+		m := newActionTestModel(t)
+		m.navigateToDetail("some-other-page")
+
+		updated, _ := m.Update(pages.PageCreatedMsg{ID: "new-page", ParentPageID: "parent-page"})
+		m = updated.(AppModel)
+
+		assert.Equal(t, "some-other-page", m.pages[PageDetail].(*pages.DetailPage).PageID())
+	})
+}
+
+func TestModel_PaletteStaysClosedOverListsAndPrompts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("to-do list on a page", func(t *testing.T) {
+		t.Parallel()
+		m := newActionTestModel(t)
+		m.navigateToDetail("page-1")
+		updated, _ := m.Update(pages.NewLoadedMsgForTest("page-1", "- [ ] a task"))
+		m = updated.(AppModel)
+		updated, _ = m.Update(runeKey('t'))
+		m = updated.(AppModel)
+
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		m = updated.(AppModel)
+
+		assert.False(t, m.showPalette, "a palette refresh would change the page under the list")
+	})
+
+	t.Run("new-row prompt", func(t *testing.T) {
+		t.Parallel()
+		m := listModel(t)
+		updated, _ := m.Update(runeKey('n'))
+		m = updated.(AppModel)
+
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		m = updated.(AppModel)
+
+		assert.False(t, m.showPalette)
+	})
+
+	t.Run("search box still allows it", func(t *testing.T) {
+		t.Parallel()
+		m := newActionTestModel(t)
+		updated, _ := m.Update(components.CommandExecutedMsg{ActionType: "search"})
+		m = updated.(AppModel)
+
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		m = updated.(AppModel)
+
+		assert.True(t, m.showPalette)
+	})
 }

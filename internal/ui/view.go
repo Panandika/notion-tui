@@ -36,8 +36,17 @@ var helpSections = []helpSection{
 	{"Page", [][2]string{
 		{"↑/k  ↓/j", "scroll"},
 		{"e", "edit the page in $VISUAL / $EDITOR"},
+		{"p", "change properties (status, select, date, checkbox)"},
+		{"t", "check or uncheck to-dos"},
 		{"ctrl+n", "new page inside this page"},
 		{"r", "reload from Notion"},
+	}},
+	{"Database rows", [][2]string{
+		{"enter", "open the row"},
+		{"n", "new row"},
+		{"s", "change sort order"},
+		{"/", "filter rows by title"},
+		{"r", "reload"},
 	}},
 	{"Search", [][2]string{
 		{"enter", "search, or open the selected result"},

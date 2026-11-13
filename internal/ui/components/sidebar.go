@@ -196,6 +196,19 @@ func (s *Sidebar) SetItems(items []Item) {
 	}
 }
 
+// SelectID moves the cursor to the item with the given ID, if it is in the
+// list. It reports whether the item was found.
+func (s *Sidebar) SelectID(id string) bool {
+	for index, item := range s.list.Items() {
+		if entry, ok := item.(Item); ok && entry.id == id {
+			s.list.Select(index)
+			s.selectedID = id
+			return true
+		}
+	}
+	return false
+}
+
 // SelectedID returns the ID of the currently selected item.
 func (s Sidebar) SelectedID() string {
 	return s.selectedID

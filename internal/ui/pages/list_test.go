@@ -29,6 +29,8 @@ type MockNotionClient struct {
 	AppendBlocksFunc  func(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
 	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
 	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
+
+	CreatePageMarkdownFunc func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
 }
 
 func (m *MockNotionClient) QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
@@ -100,8 +102,19 @@ func (m *MockNotionClient) ReplacePageMarkdown(context.Context, string, string) 
 	return nil, errors.New("not implemented")
 }
 
-func (m *MockNotionClient) CreatePageMarkdown(context.Context, string, string) (*notion.CreatedPage, error) {
+func (m *MockNotionClient) CreatePageMarkdown(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error) {
+	if m.CreatePageMarkdownFunc != nil {
+		return m.CreatePageMarkdownFunc(ctx, parent, markdown)
+	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) GetDatabase(context.Context, string) (*notionapi.Database, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) SetPageProperty(context.Context, string, notion.PropertyUpdate) error {
+	return errors.New("not implemented")
 }
 
 func (m *MockNotionClient) Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error) {
@@ -1117,4 +1130,267 @@ func TestListPage_TitleVisibleAtNormalSize(t *testing.T) {
 
 	assert.Contains(t, view, "Pages")
 	assert.NotContains(t, view, "? more", "? belongs to the app's help, not the list's")
+}
+
+func loadedList(t *testing.T, client *MockNotionClient, rows ...Page) *ListPage {
+	t.Helper()
+	lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: client, DatabaseID: "db-1"})
+	lp.Update(pagesLoadedMsg{pages: rows})
+	return &lp
+}
+
+func listKey(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}
+
+func TestRowSummary(t *testing.T) {
+	t.Parallel()
+
+	page := &notionapi.Page{Properties: notionapi.Properties{
+		"Name":   &notionapi.TitleProperty{Type: notionapi.PropertyTypeTitle, Title: []notionapi.RichText{{PlainText: "Row"}}},
+		"Status": &notionapi.StatusProperty{Type: notionapi.PropertyTypeStatus, Status: notionapi.Status{Name: "In progress"}},
+		"Size":   &notionapi.SelectProperty{Type: notionapi.PropertyTypeSelect},
+		"Done":   &notionapi.CheckboxProperty{Type: notionapi.PropertyTypeCheckbox, Checkbox: true},
+		"Owner":  &notionapi.PeopleProperty{Type: notionapi.PropertyTypePeople, People: []notionapi.User{{Name: "Ada"}}},
+		"Tags":   &notionapi.MultiSelectProperty{Type: notionapi.PropertyTypeMultiSelect, MultiSelect: []notionapi.Option{{Name: "x"}}},
+	}}
+
+	row := rowFromPage(page)
+
+	assert.Equal(t, "Row", row.Title)
+	assert.Equal(t, "In progress · ☑ Done · Owner: Ada", row.Summary,
+		"set values only, most useful first, at most three")
+}
+
+func TestListPage_RowsShowTheirProperties(t *testing.T) {
+	t.Parallel()
+
+	lp := loadedList(t, &MockNotionClient{}, Page{ID: "r1", Title: "Write report", Summary: "In progress · 2026-12-01", UpdatedAt: time.Now()})
+
+	view := lp.View()
+
+	assert.Contains(t, view, "Write report")
+	assert.Contains(t, view, "In progress · 2026-12-01")
+}
+
+func TestListPage_SortCycles(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	lp := loadedList(t, &MockNotionClient{},
+		Page{ID: "b", Title: "banana", UpdatedAt: now.Add(-3 * time.Hour)},
+		Page{ID: "c", Title: "Cherry", UpdatedAt: now.Add(-1 * time.Hour)},
+		Page{ID: "a", Title: "apple", UpdatedAt: now.Add(-2 * time.Hour)},
+	)
+	order := func() []string {
+		var ids []string
+		for _, item := range lp.sidebar.Items() {
+			ids = append(ids, item.ID())
+		}
+		return ids
+	}
+
+	assert.Equal(t, []string{"b", "c", "a"}, order(), "starts in the order Notion returned")
+
+	lp.Update(listKey('s'))
+	assert.Equal(t, []string{"a", "b", "c"}, order(), "title order ignores case")
+	assert.Contains(t, lp.statusBar.HelpText(), "sort (title)")
+
+	lp.Update(listKey('s'))
+	assert.Equal(t, []string{"c", "a", "b"}, order(), "most recently edited first")
+
+	lp.Update(listKey('s'))
+	assert.Equal(t, []string{"b", "c", "a"}, order(), "back to Notion's order")
+}
+
+func TestListPage_SelectionFollowsSortAndFilter(t *testing.T) {
+	t.Parallel()
+
+	lp := loadedList(t, &MockNotionClient{},
+		Page{ID: "b", Title: "banana", UpdatedAt: time.Now()},
+		Page{ID: "a", Title: "apple", UpdatedAt: time.Now()},
+	)
+	lp.Update(listKey('s')) // title order: apple first
+	assert.Equal(t, "b", lp.sidebar.SelectedID(), "the cursor stays on the same row when the order changes")
+	lp.Update(listKey('g')) // go to the top of the sorted list
+
+	_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected := firstMsgOfType[components.ItemSelectedMsg](t, cmd)
+	_, cmd = lp.Update(selected)
+
+	nav, ok := cmd().(NavigationMsg)
+	require.True(t, ok)
+	assert.Equal(t, "a", nav.PageID())
+	require.NotNil(t, lp.SelectedPage())
+	assert.Equal(t, "apple", lp.SelectedPage().Title, "the selected row is found by ID, not by screen position")
+}
+
+func TestListPage_NewRow(t *testing.T) {
+	t.Parallel()
+
+	typeText := func(lp *ListPage, text string) {
+		for _, r := range text {
+			lp.Update(listKey(r))
+		}
+	}
+
+	t.Run("creates a row in this database and opens it", func(t *testing.T) {
+		t.Parallel()
+		client := &MockNotionClient{}
+		var gotParent notion.PageParent
+		var gotMarkdown string
+		client.CreatePageMarkdownFunc = func(_ context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error) {
+			gotParent, gotMarkdown = parent, markdown
+			return &notion.CreatedPage{ID: "new-row"}, nil
+		}
+		queries := 0
+		client.QueryDatabaseFunc = func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			queries++
+			return &notionapi.DatabaseQueryResponse{}, nil
+		}
+		lp := loadedList(t, client, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
+
+		lp.Update(listKey('n'))
+		require.True(t, lp.CapturesInput())
+		assert.Contains(t, lp.View(), "New row title:")
+
+		// Letters that are shortcuts elsewhere are just text here
+		typeText(lp, "Plan Q3 [draft] *urgent*")
+		_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		require.NotNil(t, cmd)
+		created, ok := cmd().(rowCreatedMsg)
+		require.True(t, ok)
+
+		assert.Equal(t, notion.PageParent{DatabaseID: "db-1"}, gotParent)
+		assert.Equal(t, `# Plan Q3 \[draft\] \*urgent\*`, gotMarkdown, "the title is kept as typed, not read as formatting")
+		assert.False(t, lp.CapturesInput())
+
+		_, cmd = lp.Update(created)
+		msgs := collectMsgs(cmd)
+		assert.Contains(t, msgs, PageCreatedMsg{ID: "new-row"}, "the new row opens")
+		assert.Equal(t, 1, queries, "the list reloads so the row is there on return")
+	})
+
+	t.Run("empty title creates nothing", func(t *testing.T) {
+		t.Parallel()
+		client := &MockNotionClient{}
+		calls := 0
+		client.CreatePageMarkdownFunc = func(context.Context, notion.PageParent, string) (*notion.CreatedPage, error) {
+			calls++
+			return nil, nil
+		}
+		lp := loadedList(t, client, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
+
+		lp.Update(listKey('n'))
+		typeText(lp, "   ")
+		_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+		assert.Nil(t, cmd)
+		assert.Zero(t, calls)
+		assert.False(t, lp.CapturesInput())
+	})
+
+	t.Run("esc cancels", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
+
+		lp.Update(listKey('n'))
+		typeText(lp, "half typed")
+		_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+		assert.Nil(t, cmd)
+		assert.False(t, lp.CapturesInput())
+		assert.NotContains(t, lp.View(), "New row title:")
+	})
+
+	t.Run("failure is reported and the list stays usable", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
+
+		_, cmd := lp.Update(rowCreatedMsg{err: errors.New("forbidden")})
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, lp.statusBar.HelpText(), "forbidden")
+		lp.Update(listKey('j'))
+		assert.NotContains(t, lp.statusBar.HelpText(), "forbidden", "the next key clears the message")
+	})
+
+	t.Run("prompt fits a small terminal", func(t *testing.T) {
+		t.Parallel()
+		lp := NewListPage(NewListPageInput{Width: 30, Height: 8, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+		lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "Existing", UpdatedAt: time.Now()}}})
+		lp.Update(listKey('n'))
+
+		view := lp.View()
+
+		assert.LessOrEqual(t, lipgloss.Height(view), 8)
+		assert.LessOrEqual(t, lipgloss.Width(view), 30)
+	})
+}
+
+func TestListPage_LateLoadMoreOfAnOlderListIsDropped(t *testing.T) {
+	t.Parallel()
+
+	client := &MockNotionClient{}
+	client.QueryDatabaseFunc = func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+		return &notionapi.DatabaseQueryResponse{}, nil
+	}
+	lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: client, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}}, hasMore: true, nextCursor: "c1"})
+
+	// The user asks for more, then the list is reloaded before that arrives
+	_, more := lp.Update(listKey('m'))
+	require.NotNil(t, more)
+	lp.Refresh()
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}, {ID: "r2", Title: "two"}}})
+
+	lp.Update(pagesLoadedMsg{more: true, epoch: 0, pages: []Page{{ID: "old", Title: "from the old list"}}})
+
+	var ids []string
+	for _, item := range lp.sidebar.Items() {
+		ids = append(ids, item.ID())
+	}
+	assert.Equal(t, []string{"r1", "r2"}, ids, "neither duplicated nor replaced by the stale page")
+	assert.False(t, lp.loadingMore)
+}
+
+func TestListPage_LoadMoreAppends(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}}, hasMore: true, nextCursor: "c1"})
+
+	lp.Update(pagesLoadedMsg{more: true, epoch: lp.epoch, pages: []Page{{ID: "r2", Title: "two"}}})
+
+	assert.Len(t, lp.sidebar.Items(), 2)
+}
+
+func TestListPage_ReloadKeepsTheCursorOnTheSameRow(t *testing.T) {
+	t.Parallel()
+
+	lp := loadedList(t, &MockNotionClient{}, Page{ID: "a", Title: "a"}, Page{ID: "b", Title: "b"}, Page{ID: "c", Title: "c"})
+	lp.Update(listKey('j'))
+	require.Equal(t, "b", lp.sidebar.SelectedID())
+
+	// A row was added above while the user was away
+	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "new", Title: "new"}, {ID: "a", Title: "a"}, {ID: "b", Title: "b"}, {ID: "c", Title: "c"}}})
+
+	assert.Equal(t, "b", lp.sidebar.SelectedID())
+}
+
+func TestListPage_NewRowPromptIsVisibleInAnEmptyDatabase(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 20, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{})
+	assert.Contains(t, lp.View(), "Press n to add one")
+
+	lp.Update(listKey('n'))
+	for _, r := range "First" {
+		lp.Update(listKey(r))
+	}
+
+	view := lp.View()
+	assert.Contains(t, view, "New row title: First", "the user must see what they type")
+	assert.LessOrEqual(t, lipgloss.Height(view), 20)
 }
