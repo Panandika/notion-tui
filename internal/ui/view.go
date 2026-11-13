@@ -38,7 +38,11 @@ var helpSections = []helpSection{
 		{"e", "edit the page in $VISUAL / $EDITOR"},
 		{"p", "change properties (status, select, date, checkbox)"},
 		{"t", "check or uncheck to-dos"},
+		{"o", "follow a link: child page, database, mention, web"},
+		{"[  ]", "back / forward through pages read"},
+		{"/  n  N", "find in page, next, previous"},
 		{"ctrl+n", "new page inside this page"},
+		{"D", "archive the page (asks first)"},
 		{"r", "reload from Notion"},
 	}},
 	{"Database rows", [][2]string{

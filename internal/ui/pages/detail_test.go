@@ -28,6 +28,10 @@ type mockViewer struct {
 	height       int
 	updateCalled int
 	initCalled   bool
+
+	lastFind       string
+	findCalls      int
+	findNextDeltas []int
 }
 
 func newMockViewer() *mockViewer {
@@ -59,6 +63,21 @@ func (m *mockViewer) SetBlocks(blocks []notionapi.Block) tea.Cmd {
 func (m *mockViewer) SetMarkdown(markdown string) tea.Cmd {
 	m.markdown = markdown
 	return nil
+}
+
+func (m *mockViewer) Find(query string) int {
+	m.lastFind = query
+	m.findCalls++
+	return strings.Count(m.markdown, query)
+}
+
+func (m *mockViewer) FindNext(delta int) (position, total int) {
+	m.findNextDeltas = append(m.findNextDeltas, delta)
+	total = strings.Count(m.markdown, m.lastFind)
+	if total == 0 || m.lastFind == "" {
+		return 0, 0
+	}
+	return 1, total
 }
 
 func (m *mockViewer) SetSize(width, height int) {

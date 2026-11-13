@@ -581,3 +581,199 @@ func TestDetailPage_Properties_ChoosingTheCurrentValueWritesNothing(t *testing.T
 	assert.Empty(t, fx.client.SetPagePropertyCalls)
 	assert.Equal(t, modeProperties, fx.page.mode)
 }
+
+const (
+	linkedPageID = "4169a22b64ff806c9c42d2caf2d80d06"
+	linkedDBID   = "b2f9a22b64ff832981390180e2c765dd"
+)
+
+func linksMarkdown() string {
+	return "See the [guide](https://example.com/guide).\n" +
+		"<page url=\"https://app.notion.com/p/" + linkedPageID + "\">Sub page</page>\n" +
+		"<database url=\"https://app.notion.com/p/" + linkedDBID + "\">\nTasks\n</database>"
+}
+
+func TestDetailPage_Links(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a child page opens in the app", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, linksMarkdown())
+
+		fx.press(t, keyRune('o'))
+		view := fx.page.View()
+		assert.Contains(t, view, "guide")
+		assert.Contains(t, view, "Sub page")
+		assert.Contains(t, view, "Tasks")
+
+		_, cmd := fx.page.Update(keyRune('j'))
+		assert.Nil(t, cmd)
+		_, cmd = fx.page.Update(enterKey)
+		require.NotNil(t, cmd)
+		assert.Equal(t, OpenLinkMsg{ID: linkedPageID}, cmd())
+		assert.False(t, fx.page.CapturesInput())
+	})
+
+	t.Run("a database opens as a database", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, linksMarkdown())
+
+		fx.press(t, keyRune('o'), keyRune('G'))
+		_, cmd := fx.page.Update(enterKey)
+
+		require.NotNil(t, cmd)
+		assert.Equal(t, OpenLinkMsg{ID: linkedDBID, Database: true}, cmd())
+	})
+
+	t.Run("a web link goes to the browser", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, linksMarkdown())
+		var opened []string
+		fx.page.openURL = func(url string) error { opened = append(opened, url); return nil }
+
+		fx.press(t, keyRune('o'), enterKey)
+
+		assert.Equal(t, []string{"https://example.com/guide"}, opened)
+		assert.Contains(t, fx.page.notice, "Opened in the browser")
+	})
+
+	t.Run("a browser failure shows the link so it can be copied", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, linksMarkdown())
+		fx.page.openURL = func(string) error { return errors.New("no browser") }
+
+		fx.press(t, keyRune('o'), enterKey)
+
+		assert.Contains(t, fx.page.notice, "https://example.com/guide")
+	})
+
+	t.Run("no links", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "plain text")
+
+		fx.press(t, keyRune('o'))
+
+		assert.False(t, fx.page.CapturesInput())
+		assert.Contains(t, fx.page.notice, "no links")
+	})
+}
+
+func TestOpenInBrowser_RefusesAnythingButWebLinks(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []string{"file:///etc/passwd", "javascript:alert(1)", "mailto:a@b.c", "-h", "https://", ""} {
+		assert.Error(t, openInBrowser(target), "target %q", target)
+	}
+}
+
+func TestDetailPage_FindInPage(t *testing.T) {
+	t.Parallel()
+
+	typeText := func(fx detailFixture, text string) {
+		for _, r := range text {
+			fx.page.Update(keyRune(r))
+		}
+	}
+
+	t.Run("search, then step through matches", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "budget one\n\nbudget two")
+
+		fx.press(t, keyRune('/'))
+		require.True(t, fx.page.CapturesInput())
+		// Letters that are shortcuts elsewhere are search text here
+		typeText(fx, "budget")
+		fx.press(t, enterKey)
+
+		assert.Equal(t, "budget", fx.viewer.lastFind)
+		assert.Contains(t, fx.page.notice, "Match 1 of 2")
+		assert.False(t, fx.page.CapturesInput())
+
+		fx.page.Update(keyRune('n'))
+		fx.page.Update(keyRune('N'))
+		assert.Equal(t, []int{1, -1}, fx.viewer.findNextDeltas)
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "some text")
+
+		fx.press(t, keyRune('/'))
+		typeText(fx, "zzz")
+		fx.press(t, enterKey)
+
+		assert.Contains(t, fx.page.notice, `No match for "zzz"`)
+	})
+
+	t.Run("n before any search explains itself", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "some text")
+
+		fx.page.Update(keyRune('n'))
+
+		assert.Contains(t, fx.page.notice, "press / to find")
+		assert.Empty(t, fx.viewer.findNextDeltas)
+	})
+
+	t.Run("esc cancels without searching", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "some text")
+
+		fx.press(t, keyRune('/'))
+		typeText(fx, "abc")
+		fx.press(t, escKey)
+
+		assert.Zero(t, fx.viewer.findCalls)
+		assert.False(t, fx.page.CapturesInput())
+	})
+}
+
+func TestDetailPage_Archive(t *testing.T) {
+	t.Parallel()
+
+	t.Run("asks first, and y archives", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "content")
+
+		fx.press(t, keyRune('D'))
+		require.True(t, fx.page.CapturesInput())
+		view := fx.page.View()
+		assert.Contains(t, view, `Archive "My Page"?`)
+		assert.Contains(t, view, "can be restored")
+		assert.Zero(t, fx.client.UpdatePageCallCount(), "nothing happens before the answer")
+
+		_, cmd := fx.page.Update(keyRune('y'))
+		require.NotNil(t, cmd)
+		_, cmd = fx.page.Update(cmd())
+
+		call := fx.client.LastUpdatePageCall()
+		require.NotNil(t, call)
+		assert.Equal(t, "page-1", call.ID)
+		assert.True(t, call.Request.Archived)
+		require.NotNil(t, cmd)
+		assert.Equal(t, PageArchivedMsg{ID: "page-1"}, cmd())
+	})
+
+	t.Run("anything but y keeps the page", func(t *testing.T) {
+		t.Parallel()
+		for _, key := range []tea.KeyMsg{keyRune('n'), escKey, enterKey, keyRune('x')} {
+			fx := newDetailFixture(t, "content")
+			fx.press(t, keyRune('D'), key)
+			assert.Zero(t, fx.client.UpdatePageCallCount(), "key %q must not archive", key.String())
+		}
+	})
+
+	t.Run("failure keeps the page open and says why", func(t *testing.T) {
+		t.Parallel()
+		fx := newDetailFixture(t, "content")
+		fx.client.UpdatePageFunc = func(context.Context, string, *notionapi.PageUpdateRequest) (*notionapi.Page, error) {
+			return nil, errors.New("forbidden")
+		}
+
+		fx.press(t, keyRune('D'), keyRune('y'))
+
+		assert.Contains(t, fx.page.notice, "forbidden")
+		assert.False(t, fx.page.Busy())
+		assert.False(t, fx.page.CapturesInput())
+	})
+}
