@@ -860,3 +860,18 @@ func TestModel_ReturningToThePageViewShowsThePageThatWasLeft(t *testing.T) {
 	m = press(m, runeKey('['))
 	assert.Equal(t, "a", shownPage(m), "with its history intact")
 }
+
+func TestModel_ReboundKeyDoesNotTypeIntoThePalette(t *testing.T) {
+	t.Parallel()
+
+	m := keyedModel(t, map[string]string{"help": "f1", "quit": "ctrl+q"})
+	m = press(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	require.True(t, m.showPalette)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	m = updated.(AppModel)
+
+	assert.False(t, isQuit(cmd))
+	assert.True(t, m.showPalette, "the palette is still open")
+	assert.False(t, m.cmdPalette.IsFiltering(), "and nothing was typed into it")
+}

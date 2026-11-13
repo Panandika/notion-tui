@@ -39,7 +39,7 @@ func TestNavTree_ReloadKeepsOpenNodesAndSelection(t *testing.T) {
 	results = append(results, notion.SearchResult{ID: "b2", Title: "Beta second", ObjectType: "page", ParentType: "page_id", ParentID: "b"})
 	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: results}))
 
-	assert.Equal(t, []string{"a", "b", "b1", "b2"}, visible(view.Tree()), "closed stays closed, open stays open")
+	assert.Equal(t, []string{"a", "b", "b1", "b2"}, visible(view.Tree()), "the open node stays open and shows its new child")
 	assert.Equal(t, "b1", view.Selected().ID, "the selection stays on the same item")
 
 	// The selected item is gone after a reload: fall back to the top

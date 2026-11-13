@@ -74,11 +74,14 @@ var reserved = map[string]bool{
 	"pgup": true, "pgdown": true, "home": true, "end": true,
 	"j": true, "k": true, "h": true, "l": true, " ": true,
 	"g": true, "G": true, "f": true, "b": true, "u": true, "d": true,
+	"ctrl+u": true, "ctrl+d": true, // Half a page up and down
+	"ctrl+t": true, // Switches the search mode
 }
 
 // A key is one visible character, or a named key the terminal can send.
 // ctrl+i and ctrl+m are left out: terminals send them as tab and enter.
-var keyPattern = regexp.MustCompile(`^(\S|ctrl\+[abd-hj-ln-z]|alt\+\S|f[1-9]|f1[0-2]|tab|shift\+tab|backspace|delete)$`)
+// So are backspace and delete, which text fields need.
+var keyPattern = regexp.MustCompile(`^(\S|ctrl\+[abd-hj-ln-z]|alt\+\S|f[1-9]|f1[0-2]|tab|shift\+tab)$`)
 
 // Map holds the user's key choices.
 type Map struct {
@@ -165,7 +168,7 @@ func checkKey(key string) error {
 	case reserved[key]:
 		return fmt.Errorf("%q is used for moving, confirming or leaving and cannot be reassigned", key)
 	case !keyPattern.MatchString(key):
-		return fmt.Errorf("%q is not a key (use one character, ctrl+<letter>, alt+<character>, f1-f12, tab, shift+tab, backspace or delete)", key)
+		return fmt.Errorf("%q is not a key (use one character, ctrl+<letter>, alt+<character>, f1-f12, tab or shift+tab)", key)
 	}
 	return nil
 }
@@ -210,9 +213,12 @@ func isText(msg tea.KeyMsg) bool {
 }
 
 // Translate turns the key the user pressed into the key the app expects.
-// screen says which actions are reachable besides the global ones. While
-// text is being typed (typing is true) characters are left alone and only
-// global actions on non-character keys are translated.
+// screen says which actions are reachable besides the global ones.
+//
+// While text is being typed (typing is true) characters are left alone, and
+// a key is only translated for a global action whose default key is not a
+// character either (the palette, the sidebar): translating f1 to "?" would
+// type a question mark into the text.
 //
 // ok is false when the key should be ignored: it is the default key of an
 // action the user moved elsewhere.
@@ -231,6 +237,9 @@ func (m *Map) Translate(msg tea.KeyMsg, screen Scope, typing bool) (translated t
 	key := msg.String()
 	for _, scope := range scopes {
 		if press, found := m.incoming[scope][key]; found {
+			if typing && isText(press) {
+				return msg, true
+			}
 			return press, true
 		}
 	}

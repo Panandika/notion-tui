@@ -156,9 +156,10 @@ cache_dir: "~/.cache/notion-tui"
 # theme: auto
 
 # Keys for actions, if you do not like the defaults. Give the action name
-# and the key: one character, ctrl+<letter>, alt+<character>, f1-f12, tab,
-# shift+tab, backspace or delete. Keys for moving, confirming and leaving
-# (arrows, h j k l, g G, f b u d, space, enter, esc, ctrl+c) cannot be used.
+# and the key: one character, ctrl+<letter>, alt+<character>, f1-f12, tab
+# or shift+tab. Put punctuation in quotes: back: "<". Keys for moving,
+# confirming and leaving (arrows, h j k l, g G, f b u d, ctrl+u, ctrl+d,
+# ctrl+t, space, enter, esc, ctrl+c) cannot be used.
 #
 # Action          Default   Where
 # help            ?         everywhere

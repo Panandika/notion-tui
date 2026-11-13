@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -120,11 +121,14 @@ func addText(args []string, stdin io.Reader) (string, error) {
 	return text, nil
 }
 
+// headingMarker is the "# " to "###### " that starts a Markdown heading.
+var headingMarker = regexp.MustCompile(`^#{1,6}\s+`)
+
 // addMarkdown turns the text into the Markdown of a new page: its first
 // line as the title, the rest as the content.
 func addMarkdown(text string) string {
 	first, rest, _ := strings.Cut(strings.TrimSpace(notion.NormalizeMarkdown(text)), "\n")
-	title := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(first), "# "))
+	title := strings.TrimSpace(headingMarker.ReplaceAllString(strings.TrimSpace(first), ""))
 	if title == "" {
 		title = "Untitled"
 	}

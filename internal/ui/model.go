@@ -259,7 +259,7 @@ func (m *AppModel) translateKey(msg tea.KeyMsg) (tea.KeyMsg, bool) {
 	if msg.String() == "ctrl+c" || m.showHelp {
 		return msg, true
 	}
-	typing := m.showPalette || m.pageCapturesInput() || m.currentPage == PageWorkspaceSearch
+	typing := m.showPalette || m.pageCapturesInput()
 	return m.keys.Translate(msg, m.keyScope(), typing)
 }
 
@@ -446,6 +446,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the page as well would trigger page actions the user cannot see.
 		if m.showSidebar && m.sidebarFocus && msg.String() != "esc" {
 			if msg.String() == "r" {
+				if m.reloadingTree {
+					return m, nil // One reload at a time, so replies cannot cross
+				}
 				m.reloadingTree = true
 				m.statusBar.SetHelpText("Reloading the workspace...")
 				return m, m.fetchWorkspaceTreeCmd()

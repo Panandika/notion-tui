@@ -74,6 +74,7 @@ func TestAddMarkdown(t *testing.T) {
 		{"heading marker is not doubled", "# Already a heading\nbody", "Already a heading", "body"},
 		{"markdown characters in the title stay literal", "fix *that* [bug]_now", "fix *that* [bug]_now", ""},
 		{"a hash that is not a heading stays", "#42 is broken", "#42 is broken", ""},
+		{"any heading level", "## Sub heading\nbody", "Sub heading", "body"},
 		{"windows line ends", "Title\r\nbody\r\n", "Title", "body"},
 	}
 	for _, tt := range tests {

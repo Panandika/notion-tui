@@ -222,7 +222,7 @@ keys:
   find_next: ctrl+g
 ```
 
-A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab`, `shift+tab`, `backspace` or `delete`. Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
+A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab` or `shift+tab`; put punctuation in quotes (`back: "<"`). Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, `ctrl+u`, `ctrl+d`, `ctrl+t`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
 
 Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
 

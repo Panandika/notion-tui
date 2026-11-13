@@ -87,6 +87,19 @@ func TestTranslate_WhileTyping(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestTranslate_WhileTypingNeverProducesACharacter(t *testing.T) {
+	t.Parallel()
+
+	m, err := New(map[string]string{"help": "f1", "quit": "ctrl+q"})
+	require.NoError(t, err)
+
+	for _, press := range []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyCtrlQ}} {
+		got, ok := m.Translate(press, Page, true)
+		assert.True(t, ok)
+		assert.Equal(t, press, got, "%s must not become the ? or q it replaced", press)
+	}
+}
+
 func TestTranslate_PasteIsNeverAKey(t *testing.T) {
 	t.Parallel()
 
@@ -113,6 +126,9 @@ func TestNew_Rejects(t *testing.T) {
 		{"quit key", map[string]string{"edit": "ctrl+c"}, "cannot be reassigned"},
 		{"not a key", map[string]string{"edit": "super+e"}, "is not a key"},
 		{"terminal sends tab", map[string]string{"edit": "ctrl+i"}, "is not a key"},
+		{"text fields need it", map[string]string{"quit": "backspace"}, "is not a key"},
+		{"half page scroll", map[string]string{"edit": "ctrl+d"}, "cannot be reassigned"},
+		{"search mode switch", map[string]string{"sidebar": "ctrl+t"}, "cannot be reassigned"},
 		{"same screen", map[string]string{"edit": "p"}, `"p" is bound to both edit and properties`},
 		{"global against a screen", map[string]string{"quit": "s"}, `"s" is bound to both quit and row_sort`},
 		{"two overrides", map[string]string{"edit": "x", "todos": "x"}, `"x" is bound to both edit and todos`},
