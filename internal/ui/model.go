@@ -8,6 +8,7 @@ import (
 
 	"github.com/Panandika/notion-tui/internal/cache"
 	"github.com/Panandika/notion-tui/internal/config"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 	"github.com/Panandika/notion-tui/internal/ui/pages"
@@ -42,6 +43,7 @@ type AppModel struct {
 
 	// Services
 	notionClient *notion.Client
+	keys         *keymap.Map
 	cache        *cache.PageCache
 	config       *config.Config
 
@@ -63,12 +65,20 @@ type AppModel struct {
 	// another screen, newest last, so coming back shows the same page even
 	// if other pages were read in between.
 	parked []parkedPage
+
+	// reloadingTree is set while a tree reload the user asked for runs
+	reloadingTree bool
 }
+
+// modeReadOnly is shown in the status bar while changes are turned off.
+const modeReadOnly = "READ-ONLY"
 
 // NewModelInput contains the parameters for creating a new AppModel.
 type NewModelInput struct {
 	Config *config.Config
 	Cache  *cache.PageCache
+	// Keys holds the user's key choices; nil means the default keys.
+	Keys *keymap.Map
 }
 
 // NewModel creates a new root TUI model with page orchestration.
@@ -76,6 +86,11 @@ type NewModelInput struct {
 func NewModel(input NewModelInput) AppModel {
 	// Initialize services
 	notionClient := notion.NewClient(input.Config.NotionToken)
+	notionClient.SetReadOnly(input.Config.ReadOnly)
+	keys := input.Keys
+	if keys == nil {
+		keys = keymap.Default()
+	}
 
 	// Initialize cache if not provided
 	cacheInstance := input.Cache
@@ -109,8 +124,11 @@ func NewModel(input NewModelInput) AppModel {
 
 	statusBar := components.NewStatusBar()
 	statusBar.SetMode(components.ModeBrowse)
+	statusBar.SetHelpText(keys.Label("{help} for help"))
+	if input.Config.ReadOnly {
+		statusBar.SetMode(modeReadOnly)
+	}
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText("? for help")
 
 	cmdPalette := components.NewCommandPalette()
 
@@ -128,6 +146,7 @@ func NewModel(input NewModelInput) AppModel {
 		showPalette:  false,
 		mode:         ViewModeBrowse,
 		notionClient: notionClient,
+		keys:         keys,
 		cache:        cacheInstance,
 		config:       input.Config,
 		pageList:     []pages.Page{},
@@ -189,6 +208,8 @@ func (m *AppModel) initializePages() {
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.config.GetDatabaseID(),
+			ReadOnly:     m.config.ReadOnly,
+			Keys:         m.keys,
 		})
 		m.pages[PageList] = &listPage
 	}
@@ -220,6 +241,45 @@ func (m *AppModel) initializePages() {
 
 // Update handles all messages and orchestrates updates across pages and components.
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, isKey := msg.(tea.KeyMsg); isKey {
+		translated, ok := m.translateKey(key)
+		if !ok {
+			return m, nil
+		}
+		msg = translated
+	}
+	return m.update(msg)
+}
+
+// translateKey turns a key the user chose for an action into the default
+// key the rest of the app knows. ok is false for a key that now does
+// nothing: the default of an action the user moved to another key.
+func (m *AppModel) translateKey(msg tea.KeyMsg) (tea.KeyMsg, bool) {
+	// Quitting and closing the help screen never depend on the key map
+	if msg.String() == "ctrl+c" || m.showHelp {
+		return msg, true
+	}
+	typing := m.showPalette || m.pageCapturesInput()
+	return m.keys.Translate(msg, m.keyScope(), typing)
+}
+
+// keyScope says which actions, besides the global ones, a key can reach.
+func (m *AppModel) keyScope() keymap.Scope {
+	if m.showSidebar && m.sidebarFocus {
+		return keymap.Tree
+	}
+	switch m.currentPage {
+	case PageDetail:
+		return keymap.Page
+	case PageList:
+		return keymap.Rows
+	default:
+		return keymap.None
+	}
+}
+
+// update handles a message whose keys are the default ones.
+func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -242,6 +302,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.treeView.SetError(msg.err)
 		} else {
 			m.treeView.SetTree(msg.tree)
+		}
+		if m.reloadingTree {
+			// The reload the user asked for is over
+			m.reloadingTree = false
+			m.statusBar.SetHelpText(m.keys.Label("{help} for help"))
 		}
 		return m, nil
 
@@ -380,6 +445,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// With the sidebar focused, keys drive the tree only. Sending them to
 		// the page as well would trigger page actions the user cannot see.
 		if m.showSidebar && m.sidebarFocus && msg.String() != "esc" {
+			if msg.String() == "r" {
+				if m.reloadingTree {
+					return m, nil // One reload at a time, so replies cannot cross
+				}
+				m.reloadingTree = true
+				m.statusBar.SetHelpText("Reloading the workspace...")
+				return m, m.fetchWorkspaceTreeCmd()
+			}
 			var cmd tea.Cmd
 			m.treeView, cmd = m.treeView.Update(msg)
 			return m, cmd
@@ -528,7 +601,7 @@ func (m AppModel) View() string {
 	}
 
 	if m.showHelp {
-		return RenderHelp(m.width, m.height)
+		return RenderHelp(m.width, m.height, m.keys)
 	}
 
 	// Get current page view
@@ -743,6 +816,8 @@ func (m *AppModel) installDetailPage(notionPageID string) *pages.DetailPage {
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		PageID:       notionPageID,
+		ReadOnly:     m.config.ReadOnly,
+		Keys:         m.keys,
 	})
 	m.pages[PageDetail] = &detailPage
 	return &detailPage
@@ -874,6 +949,8 @@ func (m *AppModel) createPage(pageID PageID) {
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			DatabaseID:   m.currentDBID,
+			ReadOnly:     m.config.ReadOnly,
+			Keys:         m.keys,
 		})
 		m.pages[pageID] = &listPage
 
@@ -891,6 +968,8 @@ func (m *AppModel) createPage(pageID PageID) {
 			NotionClient: m.notionClient,
 			Cache:        m.cache,
 			PageID:       "",
+			ReadOnly:     m.config.ReadOnly,
+			Keys:         m.keys,
 		})
 		m.pages[pageID] = &detailPage
 
@@ -1132,6 +1211,8 @@ func (m *AppModel) installListPage(databaseID string) tea.Cmd {
 		NotionClient: m.notionClient,
 		Cache:        m.cache,
 		DatabaseID:   databaseID,
+		ReadOnly:     m.config.ReadOnly,
+		Keys:         m.keys,
 	})
 	m.pages[PageList] = &listPage
 	return listPage.Init()

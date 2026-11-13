@@ -324,3 +324,34 @@ func TestEscapeUnescapeRoundTrip(t *testing.T) {
 	}
 	assert.Equal(t, `keep \n as is`, UnescapeMarkdown(`keep \n as is`), "a backslash before an ordinary character is kept")
 }
+
+func TestClient_ReadOnlyRefusesEveryChange(t *testing.T) {
+	t.Parallel()
+
+	client, requests := newMarkdownTestClient(t, func(w http.ResponseWriter, _ int) {
+		_, _ = w.Write([]byte(`{"id":"p","markdown":"text"}`))
+	})
+	client.SetReadOnly(true)
+	ctx := context.Background()
+
+	_, err := client.UpdatePageMarkdown(ctx, "p", []ContentUpdate{{OldStr: "a", NewStr: "b"}})
+	assert.ErrorIs(t, err, ErrReadOnly)
+	_, err = client.ReplacePageMarkdown(ctx, "p", "new")
+	assert.ErrorIs(t, err, ErrReadOnly)
+	_, err = client.CreatePageMarkdown(ctx, PageParent{PageID: "p"}, "# New")
+	assert.ErrorIs(t, err, ErrReadOnly)
+	assert.ErrorIs(t, client.SetPageProperty(ctx, "p", CheckboxUpdate("Done", true)), ErrReadOnly)
+	_, err = client.UpdatePage(ctx, "p", &notionapi.PageUpdateRequest{Archived: true})
+	assert.ErrorIs(t, err, ErrReadOnly)
+	_, err = client.AppendBlocks(ctx, "p", &notionapi.AppendBlockChildrenRequest{})
+	assert.ErrorIs(t, err, ErrReadOnly)
+	_, err = client.DeleteBlock(ctx, "b")
+	assert.ErrorIs(t, err, ErrReadOnly)
+	_, err = client.UpdateBlock(ctx, "b", &notionapi.BlockUpdateRequest{})
+	assert.ErrorIs(t, err, ErrReadOnly)
+	assert.Empty(t, *requests, "nothing reached Notion")
+
+	_, err = client.GetPageMarkdown(ctx, "p")
+	require.NoError(t, err, "reading still works")
+	assert.Len(t, *requests, 1)
+}

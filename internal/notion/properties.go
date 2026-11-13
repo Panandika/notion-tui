@@ -274,6 +274,9 @@ func (c *Client) GetDatabase(ctx context.Context, id string) (*notionapi.Databas
 
 // SetPageProperty changes one property of a page.
 func (c *Client) SetPageProperty(ctx context.Context, pageID string, update PropertyUpdate) error {
+	if err := c.writable(); err != nil {
+		return err
+	}
 	if update.Name == "" || update.value == nil {
 		return errors.New("set page property: empty update")
 	}

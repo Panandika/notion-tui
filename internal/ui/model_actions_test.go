@@ -1,14 +1,17 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Panandika/notion-tui/internal/config"
+	"github.com/Panandika/notion-tui/internal/keymap"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 	"github.com/Panandika/notion-tui/internal/ui/pages"
 )
@@ -64,7 +67,7 @@ func TestModel_HelpScreen(t *testing.T) {
 func TestModel_HelpListsEveryPaletteCommand(t *testing.T) {
 	t.Parallel()
 
-	help := RenderHelp(120, 50)
+	help := RenderHelp(120, 50, nil)
 
 	for _, word := range []string{"search", "switch database", "refresh", "new page", "export", "help"} {
 		assert.Contains(t, help, word)
@@ -151,10 +154,134 @@ func TestModel_SidebarFocusKeepsKeysAwayFromPage(t *testing.T) {
 	m = updated.(AppModel)
 	require.True(t, m.sidebarFocus)
 
-	// "r" would refresh the detail page if it leaked through to the page.
-	_, cmd := m.Update(runeKey('r'))
+	// "e" would open the editor if it leaked through to the page.
+	updated, cmd := m.Update(runeKey('e'))
+	m = updated.(AppModel)
 
 	assert.Nil(t, cmd)
+	assert.False(t, m.pageBusy())
+}
+
+func TestModel_SidebarReloadKey(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+	m.navigateToDetail("page-1")
+	m = press(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	updated, cmd := m.Update(runeKey('r'))
+	m = updated.(AppModel)
+
+	assert.NotNil(t, cmd, "the workspace tree is fetched again")
+	assert.Contains(t, m.statusBar.View(), "Reloading the workspace")
+}
+
+func keyedModel(t *testing.T, overrides map[string]string) AppModel {
+	t.Helper()
+	keys, err := keymap.New(overrides)
+	require.NoError(t, err)
+	cfg := &config.Config{NotionToken: "test_token", CacheDir: t.TempDir()}
+	model := NewModel(NewModelInput{Config: cfg, Keys: keys})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	return updated.(AppModel)
+}
+
+func TestModel_ReboundKeys(t *testing.T) {
+	t.Parallel()
+
+	overrides := map[string]string{"help": "f1", "quit": "ctrl+q", "back": "<", "palette": "ctrl+k"}
+
+	t.Run("the chosen key does the action, the default no longer does", func(t *testing.T) {
+		t.Parallel()
+		m := keyedModel(t, overrides)
+
+		m = press(m, runeKey('?'))
+		assert.False(t, m.showHelp, "? was given up")
+		m = press(m, tea.KeyMsg{Type: tea.KeyF1})
+		assert.True(t, m.showHelp)
+		assert.Contains(t, m.View(), "f1", "the help screen shows the chosen key")
+		m = press(m, runeKey('x'))
+		require.False(t, m.showHelp)
+
+		_, cmd := m.Update(runeKey('q'))
+		assert.False(t, isQuit(cmd))
+		_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
+		assert.True(t, isQuit(cmd))
+	})
+
+	t.Run("page keys apply in the page view", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, keyedModel(t, overrides), "a", "b")
+
+		m = press(m, runeKey('['))
+		assert.Equal(t, "b", shownPage(m), "[ was given up")
+		m = press(m, runeKey('<'))
+		assert.Equal(t, "a", shownPage(m))
+	})
+
+	t.Run("characters typed into the palette are not actions", func(t *testing.T) {
+		t.Parallel()
+		m := keyedModel(t, map[string]string{"quit": "x", "palette": "ctrl+k"})
+
+		m = press(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+		assert.False(t, m.showPalette, "ctrl+p was given up")
+		m = press(m, tea.KeyMsg{Type: tea.KeyCtrlK})
+		require.True(t, m.showPalette)
+
+		_, cmd := m.Update(runeKey('x'))
+		assert.False(t, isQuit(cmd), "x is filter text here")
+
+		m = press(m, tea.KeyMsg{Type: tea.KeyCtrlK})
+		assert.False(t, m.showPalette, "the chosen key also closes it")
+	})
+
+	t.Run("ctrl+c always quits", func(t *testing.T) {
+		t.Parallel()
+		_, cmd := keyedModel(t, overrides).Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		assert.True(t, isQuit(cmd))
+	})
+}
+
+func TestModel_ReadOnly(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{NotionToken: "test_token", CacheDir: t.TempDir(), ReadOnly: true}
+	model := NewModel(NewModelInput{Config: cfg})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m := updated.(AppModel)
+
+	assert.True(t, m.notionClient.ReadOnly(), "the client itself refuses to change anything")
+	assert.Contains(t, m.statusBar.View(), "READ-ONLY")
+
+	m.navigateToDetail("page-1")
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	require.True(t, ok)
+	detail.Update(pages.NewLoadedMsgForTest("page-1", "- [ ] a to-do"))
+
+	for _, key := range []rune{'e', 't', 'p', 'D'} {
+		updated, cmd := m.Update(runeKey(key))
+		m = updated.(AppModel)
+		assert.Nil(t, cmd, "%c starts nothing", key)
+		assert.False(t, m.pageInMode(), "%c opens nothing", key)
+		assert.False(t, m.pageBusy())
+	}
+	assert.Contains(t, m.View(), "Read-only mode")
+}
+
+func TestModel_ViewFitsTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+	for _, size := range [][2]int{{100, 40}, {80, 24}, {61, 15}} {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m = updated.(AppModel)
+
+		lines := strings.Split(m.View(), "\n")
+		assert.LessOrEqual(t, len(lines), size[1], "height at %v", size)
+		for i, line := range lines {
+			assert.LessOrEqual(t, lipgloss.Width(line), size[0], "line %d at %v: %q", i, size, line)
+		}
+	}
 }
 
 func TestModel_PaletteTypingDoesNotQuit(t *testing.T) {
@@ -732,4 +859,19 @@ func TestModel_ReturningToThePageViewShowsThePageThatWasLeft(t *testing.T) {
 	assert.Equal(t, "b", shownPage(m), "not the row read in between")
 	m = press(m, runeKey('['))
 	assert.Equal(t, "a", shownPage(m), "with its history intact")
+}
+
+func TestModel_ReboundKeyDoesNotTypeIntoThePalette(t *testing.T) {
+	t.Parallel()
+
+	m := keyedModel(t, map[string]string{"help": "f1", "quit": "ctrl+q"})
+	m = press(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	require.True(t, m.showPalette)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	m = updated.(AppModel)
+
+	assert.False(t, isQuit(cmd))
+	assert.True(t, m.showPalette, "the palette is still open")
+	assert.False(t, m.cmdPalette.IsFiltering(), "and nothing was typed into it")
 }

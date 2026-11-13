@@ -2,6 +2,7 @@ package notion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,6 +46,31 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	baseURL    string
+
+	// readOnly makes every call that would change Notion fail.
+	readOnly bool
+}
+
+// ErrReadOnly is returned by every changing call of a read-only client.
+var ErrReadOnly = errors.New("read-only mode: nothing was changed in Notion")
+
+// SetReadOnly turns the refusal of changing calls on or off. Set it before
+// the client is shared between goroutines.
+func (c *Client) SetReadOnly(readOnly bool) {
+	c.readOnly = readOnly
+}
+
+// ReadOnly reports whether changing calls are refused.
+func (c *Client) ReadOnly() bool {
+	return c.readOnly
+}
+
+// writable is checked first by every call that changes Notion.
+func (c *Client) writable() error {
+	if c.readOnly {
+		return ErrReadOnly
+	}
+	return nil
 }
 
 // NewClient creates a new rate-limited Notion API client.
@@ -100,6 +126,9 @@ func (c *Client) GetBlocks(ctx context.Context, id string,
 // AppendBlocks appends blocks to a page or block.
 func (c *Client) AppendBlocks(ctx context.Context, id string,
 	req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
@@ -113,6 +142,9 @@ func (c *Client) AppendBlocks(ctx context.Context, id string,
 // UpdatePage updates a page's properties.
 func (c *Client) UpdatePage(ctx context.Context, id string,
 	req *notionapi.PageUpdateRequest) (*notionapi.Page, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
@@ -125,6 +157,9 @@ func (c *Client) UpdatePage(ctx context.Context, id string,
 
 // DeleteBlock archives a block (Notion API soft-deletes via archive).
 func (c *Client) DeleteBlock(ctx context.Context, id string) (notionapi.Block, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
@@ -150,6 +185,9 @@ func (c *Client) GetBlock(ctx context.Context, id string) (notionapi.Block, erro
 // UpdateBlock updates a block's properties.
 func (c *Client) UpdateBlock(ctx context.Context, id string,
 	req *notionapi.BlockUpdateRequest) (notionapi.Block, error) {
+	if err := c.writable(); err != nil {
+		return nil, err
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}

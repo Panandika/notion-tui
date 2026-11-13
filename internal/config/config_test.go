@@ -3,6 +3,9 @@ package config
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidate runs validation tests (T-1: table-driven).
@@ -361,4 +364,21 @@ func TestHasDatabasesWithInvalidLegacyID(t *testing.T) {
 	if cfg.HasDatabases() {
 		t.Error("HasDatabases() should return false for invalid legacy database_id")
 	}
+}
+
+func TestValidate_Theme(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{NotionToken: "token"}
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, ThemeAuto, cfg.Theme, "no theme means follow the terminal")
+
+	cfg = &Config{NotionToken: "token", Theme: "Dracula"}
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, "dracula", cfg.Theme)
+
+	cfg = &Config{NotionToken: "token", Theme: "solarized"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `theme "solarized" is not known`)
 }

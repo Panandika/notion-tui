@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Panandika/notion-tui/internal/keymap"
 )
 
 // RenderInitializing returns the loading screen text.
@@ -18,39 +20,42 @@ type helpSection struct {
 }
 
 // helpSections lists every key the app responds to. Keep it in sync with
-// the key handling in model.go and the pages.
+// the key handling in model.go and the pages. "{action}" stands for the key
+// of an action the user can rebind (see the keymap package).
 var helpSections = []helpSection{
 	{"Everywhere", [][2]string{
-		{"?", "show this help"},
-		{"ctrl+p", "command palette"},
-		{"ctrl+b", "show or hide the sidebar"},
-		{"tab", "switch focus between sidebar and page"},
+		{"{help}", "show this help"},
+		{"{palette}", "command palette"},
+		{"{sidebar}", "show or hide the sidebar"},
+		{"{focus}", "switch focus between sidebar and page"},
 		{"esc", "go back"},
-		{"q / ctrl+c", "quit"},
+		{"{quit} / ctrl+c", "quit"},
 	}},
 	{"Sidebar", [][2]string{
 		{"↑/k  ↓/j", "move"},
 		{"←/h  →/l", "collapse / expand"},
 		{"enter", "open page or database; expand a parent"},
+		{"{tree_reload}", "reload the workspace"},
 	}},
 	{"Page", [][2]string{
 		{"↑/k  ↓/j", "scroll"},
-		{"e", "edit the page in $VISUAL / $EDITOR"},
-		{"p", "change properties (status, select, date, checkbox)"},
-		{"t", "check or uncheck to-dos"},
-		{"o", "follow a link: child page, database, mention, web"},
-		{"[  ]", "back / forward through pages read"},
-		{"/  n  N", "find in page, next, previous"},
-		{"ctrl+n", "new page inside this page"},
-		{"D", "archive the page (asks first)"},
-		{"r", "reload from Notion"},
+		{"{edit}", "edit the page in $VISUAL / $EDITOR"},
+		{"{properties}", "change properties (status, select, date, checkbox)"},
+		{"{todos}", "check or uncheck to-dos"},
+		{"{links}", "follow a link: child page, database, mention, web"},
+		{"{back}  {forward}", "back / forward through pages read"},
+		{"{find}  {find_next}  {find_previous}", "find in page, next, previous"},
+		{"{new_page}", "new page inside this page"},
+		{"{archive}", "archive the page (asks first)"},
+		{"{reload}", "reload from Notion"},
 	}},
 	{"Database rows", [][2]string{
 		{"enter", "open the row"},
-		{"n", "new row"},
-		{"s", "change sort order"},
-		{"/", "filter rows by title"},
-		{"r", "reload"},
+		{"{row_new}", "new row"},
+		{"{row_sort}", "change sort order"},
+		{"{row_filter}", "filter rows by title"},
+		{"{row_reload}", "reload"},
+		{"{row_more}", "load more rows"},
 	}},
 	{"Search", [][2]string{
 		{"enter", "search, or open the selected result"},
@@ -64,8 +69,9 @@ var helpSections = []helpSection{
 	}},
 }
 
-// RenderHelp renders the full-screen key reference, centered in the terminal.
-func RenderHelp(width, height int) string {
+// RenderHelp renders the full-screen key reference, centered in the
+// terminal, with the keys the user chose.
+func RenderHelp(width, height int, keys *keymap.Map) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(darkTheme.Primary)
 	sectionStyle := lipgloss.NewStyle().Bold(true)
 	keyStyle := lipgloss.NewStyle().Foreground(darkTheme.Primary).Width(14)
@@ -75,11 +81,11 @@ func RenderHelp(width, height int) string {
 	for _, section := range helpSections {
 		lines = append(lines, sectionStyle.Render(section.title))
 		for _, binding := range section.keys {
-			lines = append(lines, "  "+keyStyle.Render(binding[0])+binding[1])
+			lines = append(lines, "  "+keyStyle.Render(keys.Label(binding[0]))+" "+binding[1])
 		}
 		lines = append(lines, "")
 	}
-	lines = append(lines, mutedStyle.Render("Press any key to close"))
+	lines = append(lines, mutedStyle.Render("Keys can be changed under \"keys:\" in the config file. Press any key to close"))
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

@@ -243,6 +243,26 @@ func (t *NavTree) IsEmpty() bool {
 	return len(t.roots) == 0
 }
 
+// KeepStateOf carries over, from the tree this one replaces, which nodes
+// were open and which node was selected. Nodes the old tree did not have
+// keep the state they were built with.
+func (t *NavTree) KeepStateOf(old *NavTree) {
+	if old == nil {
+		return
+	}
+	for id, node := range t.nodeMap {
+		if before, known := old.nodeMap[id]; known {
+			node.Expanded = before.Expanded && node.HasChildren()
+		}
+	}
+	t.rebuildVisible()
+
+	t.selectedIdx = 0
+	if selected := old.Selected(); selected != nil {
+		t.SelectByID(selected.ID)
+	}
+}
+
 // ExpandAll expands all nodes in the tree.
 func (t *NavTree) ExpandAll() {
 	for _, node := range t.nodeMap {

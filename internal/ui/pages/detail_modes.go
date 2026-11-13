@@ -219,7 +219,7 @@ func plainText(markdown string) string {
 
 // StartProperties opens the list of properties that can be changed.
 func (dp *DetailPage) StartProperties() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	databaseID := ""
@@ -252,7 +252,7 @@ func (dp *DetailPage) StartProperties() tea.Cmd {
 
 // StartTodos opens the list of the page's to-dos.
 func (dp *DetailPage) StartTodos() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	if dp.truncated {
@@ -334,7 +334,7 @@ func (dp *DetailPage) setMode(mode detailMode) {
 	case modeConfirm:
 		dp.statusBar.SetHelpText(confirmHelpText)
 	default:
-		dp.statusBar.SetHelpText(detailHelpText)
+		dp.statusBar.SetHelpText(dp.keys.Label(detailHelpText))
 	}
 }
 
@@ -451,7 +451,7 @@ func (dp *DetailPage) updateSearch(msg tea.KeyMsg) tea.Cmd {
 		}
 		dp.lastSearch = query
 		if total := dp.viewer.Find(query); total > 0 {
-			dp.setNotice(fmt.Sprintf("Match 1 of %d for %q | n: next | N: previous", total, query))
+			dp.setNotice(fmt.Sprintf("Match 1 of %d for %q", total, query) + dp.keys.Label(findHint))
 		} else {
 			dp.setNotice(fmt.Sprintf("No match for %q", query))
 		}
@@ -462,10 +462,14 @@ func (dp *DetailPage) updateSearch(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
+// findHint follows a match notice. It is filled with the keys in effect on
+// its own, never together with the search text, which is the user's.
+const findHint = " | {find_next}: next | {find_previous}: previous"
+
 // findNext jumps to the next or previous match of the last search.
 func (dp *DetailPage) findNext(delta int) {
 	if dp.viewer == nil || dp.lastSearch == "" {
-		dp.setNotice("Nothing searched yet: press / to find text")
+		dp.setNotice(dp.keys.Label("Nothing searched yet: press {find} to find text"))
 		return
 	}
 	position, total := dp.viewer.FindNext(delta)
@@ -473,12 +477,12 @@ func (dp *DetailPage) findNext(delta int) {
 		dp.setNotice(fmt.Sprintf("No match for %q", dp.lastSearch))
 		return
 	}
-	dp.setNotice(fmt.Sprintf("Match %d of %d for %q | n: next | N: previous", position, total, dp.lastSearch))
+	dp.setNotice(fmt.Sprintf("Match %d of %d for %q", position, total, dp.lastSearch) + dp.keys.Label(findHint))
 }
 
 // StartArchive asks before moving the page to Notion's trash.
 func (dp *DetailPage) StartArchive() tea.Cmd {
-	if !dp.ready() {
+	if !dp.ready() || dp.refuseChange() {
 		return nil
 	}
 	dp.setMode(modeConfirm)

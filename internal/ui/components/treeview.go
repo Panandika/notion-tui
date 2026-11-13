@@ -238,8 +238,12 @@ func (tv TreeView) renderNode(node *NavNode, selected bool) string {
 	return b.String()
 }
 
-// SetTree updates the tree data.
+// SetTree updates the tree data. Reloading keeps the user's place: open
+// nodes stay open and the selection stays on the same item.
 func (tv *TreeView) SetTree(tree *NavTree) {
+	if tree != nil {
+		tree.KeepStateOf(tv.tree)
+	}
 	tv.tree = tree
 	tv.loading = false
 	tv.err = nil
