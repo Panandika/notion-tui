@@ -393,8 +393,12 @@ func TestModelNavigationMsg(t *testing.T) {
 	updatedModel, _ := model.Update(navMsg)
 	m := updatedModel.(AppModel)
 
-	// Should have navigated to the page
-	assert.Equal(t, PageID("test-page-id"), m.currentPage)
+	// The message names a Notion page: it opens in the page view
+	assert.Equal(t, PageDetail, m.currentPage)
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	if assert.True(t, ok) {
+		assert.Equal(t, "test-page-id", detail.PageID())
+	}
 }
 
 func TestModelBackNavigation(t *testing.T) {

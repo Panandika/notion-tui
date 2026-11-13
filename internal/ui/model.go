@@ -359,8 +359,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case pages.NavigationMsg:
-		// Handle navigation to a new page
-		return m, m.navigateTo(PageID(msg.PageID()))
+		// A database row was chosen on the list page: its ID is a Notion
+		// page ID, so open that page
+		if m.pageBusy() {
+			return m, nil
+		}
+		return m, m.navigateToDetail(msg.PageID())
 
 	case components.ContentLoadedMsg, components.ErrorMsg:
 		// Rendered content belongs to the detail page's viewer. Deliver it

@@ -582,3 +582,29 @@ func TestPageViewer_Integration(t *testing.T) {
 	view := updated.View()
 	assert.NotEmpty(t, view, "view should not be empty")
 }
+
+func TestMarkdownStyle_FollowsConfiguredBackground(t *testing.T) {
+	// Not parallel: changes package state.
+	t.Cleanup(func() { SetLightBackground(false) })
+
+	SetLightBackground(false)
+	assert.Equal(t, "dark", markdownStyle())
+
+	SetLightBackground(true)
+	assert.Equal(t, "light", markdownStyle())
+}
+
+func TestPageViewer_SetMarkdownRendersWithoutATerminal(t *testing.T) {
+	t.Parallel()
+
+	viewer := NewPageViewer(NewPageViewerInput{Width: 60, Height: 20})
+
+	// Rendering must not depend on asking a terminal anything: this runs
+	// with no terminal attached and has to finish.
+	msg := viewer.SetMarkdown("# Title\n\nSome **bold** text.")()
+
+	loaded, ok := msg.(ContentLoadedMsg)
+	require.True(t, ok, "got %T", msg)
+	assert.Contains(t, loaded.Content(), "Title")
+	assert.Contains(t, loaded.Content(), "bold")
+}

@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -737,4 +738,41 @@ func TestEditorParts(t *testing.T) {
 
 	cmd := editorCommand("/tmp/page.md", env(map[string]string{"EDITOR": "code --wait"}))
 	assert.Equal(t, []string{"code", "--wait", "/tmp/page.md"}, cmd.Args)
+}
+
+func TestDetailPage_Edit_ConflictIsExplainedInPlainWords(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "line one\n\nline two")
+	fx.editor.write = func(string) string { return "line one\n\nline two, edited" }
+	fx.client.UpdatePageMarkdownFunc = func(context.Context, string, []notion.ContentUpdate) (*notion.PageMarkdown, error) {
+		// What Notion answers when the text to replace is gone.
+		return nil, fmt.Errorf("update page markdown: %w", &notionapi.Error{
+			Status:  400,
+			Code:    "validation_error",
+			Message: "No matches found for line two.\n\nFetch the page again and base old_str on the current page text.",
+		})
+	}
+
+	_, cmd := fx.page.Update(keyRune('e'))
+	fx.drain(t, cmd)
+
+	assert.Contains(t, fx.page.notice, "changed in Notion while you were editing")
+	assert.NotContains(t, fx.page.notice, "old_str", "API internals must not reach the user")
+	assert.FileExists(t, fx.editor.opened[0])
+}
+
+func TestDetailPage_Edit_OtherValidationErrorsAreShownAsIs(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "line one\n\nline two")
+	fx.editor.write = func(string) string { return "line one\n\nline two, edited" }
+	fx.client.UpdatePageMarkdownFunc = func(context.Context, string, []notion.ContentUpdate) (*notion.PageMarkdown, error) {
+		return nil, &notionapi.Error{Status: 400, Code: "validation_error", Message: "Synced pages cannot be updated"}
+	}
+
+	_, cmd := fx.page.Update(keyRune('e'))
+	fx.drain(t, cmd)
+
+	assert.Contains(t, fx.page.notice, "Synced pages cannot be updated")
 }

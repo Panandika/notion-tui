@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jomei/notionapi"
@@ -84,11 +85,11 @@ type NewListPageInput struct {
 
 // NewListPage creates a new ListPage instance.
 func NewListPage(input NewListPageInput) ListPage {
-	// Create empty sidebar initially
+	// The row list fills the page; it starts empty until rows are loaded
 	sidebar := components.NewSidebar(components.NewSidebarInput{
 		Items:  []components.Item{},
-		Width:  input.Width / 4,
-		Height: input.Height - 2,
+		Width:  input.Width,
+		Height: listHeight(input.Height),
 		Title:  "Pages",
 	})
 
@@ -170,6 +171,10 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// While the filter is being typed, letters are filter text
+		if lp.CapturesInput() {
+			break
+		}
 		switch msg.String() {
 		case "r":
 			// Refresh page list
@@ -194,7 +199,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		lp.width = msg.Width
 		lp.height = msg.Height
-		lp.sidebar.SetSize(msg.Width/4, msg.Height-2)
+		lp.sidebar.SetSize(msg.Width, listHeight(msg.Height))
 		lp.statusBar.SetWidth(msg.Width)
 		return lp, nil
 	}
@@ -250,17 +255,38 @@ func (lp *ListPage) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, main, status)
 	}
 
-	// Main content placeholder (sidebar is handled by root)
-	mainStyle := lipgloss.NewStyle().
-		Width(lp.width).
-		Height(lp.height-2).
-		Align(lipgloss.Center, lipgloss.Center).
-		Foreground(lipgloss.Color("#6B7280"))
-
-	main := mainStyle.Render("Select a page from the sidebar")
 	status := lp.statusBar.View()
 
-	return lipgloss.JoinVertical(lipgloss.Left, main, status)
+	if len(lp.pageList) == 0 {
+		emptyStyle := lipgloss.NewStyle().
+			Width(lp.width).
+			Height(lp.height-1).
+			Align(lipgloss.Center, lipgloss.Center).
+			Foreground(lipgloss.Color("#6B7280"))
+		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render("This database has no pages"), status)
+	}
+
+	// The database's rows: move with j/k, open with enter, filter with /
+	return lipgloss.JoinVertical(lipgloss.Left, lp.sidebar.View(), status)
+}
+
+// listChrome is the number of rows around the row list: the page status bar
+// plus the list's own top and bottom padding.
+const listChrome = 3
+
+// listHeight returns the height available to the row list itself.
+func listHeight(pageHeight int) int {
+	height := pageHeight - listChrome
+	if height < 1 {
+		return 1
+	}
+	return height
+}
+
+// CapturesInput reports whether the row filter is being typed, in which
+// case key presses are filter text rather than shortcuts.
+func (lp *ListPage) CapturesInput() bool {
+	return lp.sidebar.FilterState() == list.Filtering
 }
 
 // SetPages updates the page list and sidebar items.

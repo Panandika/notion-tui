@@ -1,71 +1,54 @@
-# VHS Tape: Edit Mode
-# This tape demonstrates entering edit mode and editing a page
+# VHS tape: Editing
+# Opens a page in $EDITOR (vim here) and leaves without saving, so nothing changes.
+#
+# Run from the repository root, with the token in the environment:
+#   NOTION_TUI_NOTION_TOKEN=... vhs e2e/tapes/06_edit_mode.tape
+# See e2e/tapes/README.md. This tape only reads from Notion.
 
-Output 06_edit_mode.gif
+Output e2e/out/06_edit_mode.gif
+Output e2e/out/06_edit_mode.ascii
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1200
+Set Width 1400
 Set Height 800
 Set Theme "Dracula"
+Set TypingSpeed 60ms
 
-# Set environment variables
-Env NOTION_TUI_NOTION_TOKEN "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-Env NOTION_TUI_DATABASE_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# The editor is taken from the environment. This tape drives vim.
+Env EDITOR "vim"
 
-Type "# Notion TUI - Edit Mode Demo" Sleep 500ms Enter
-Sleep 1s
-
-# Start the application
 Type "./notion-tui" Enter
-Sleep 3s
-
-# Select a page to edit
-Type "Down"
+Wait+Screen@30s /Welcome to Notion TUI/
+Sleep 1s
+# Find a page through search. "Getting Started" exists in every new Notion
+# workspace; change the query if yours has no such page.
+Ctrl+P
 Sleep 500ms
-Type "Enter"
+Enter
+Wait+Screen@10s /Search \(Workspace\)/
+Type "Getting Started"
+Enter
+Wait+Screen@30s /Search Results/
+Sleep 1s
+Enter
+# The page content is drawn in a box once it has loaded
+Wait+Screen@30s /╰─/
 Sleep 2s
 
-# View page content
-Sleep 1s
-
-# Enter edit mode with 'e'
+# "e" hands the terminal to the editor with the page as Markdown
 Type "e"
-Sleep 1s
-
-# The page should now be in edit mode
-Sleep 1s
-
-# Navigate to a block
-Type "Down"
-Sleep 500ms
-
-# Edit the block (simulated - would require actual text input)
-Type "Enter"
-Sleep 500ms
-
-# Type some text
-Type "Updated text content"
-Sleep 1s
-
-# Save changes with Ctrl+S
-Type@500ms "Ctrl+S"
+Wait+Screen@30s /\.md/
 Sleep 2s
 
-# Wait for save confirmation
+# Look around, then leave without saving
+Type "jjj"
 Sleep 1s
-
-# Exit edit mode with Esc
-Type "Escape"
-Sleep 1s
-
-# Go back to list
-Type "Escape"
-Sleep 1s
+Type ":q!"
+Enter
+Wait+Screen@15s /No changes/
+Sleep 2s
 
 # Quit
 Type "q"
-Sleep 1s
-
-Type "echo 'Edit mode test complete!'" Enter
 Sleep 1s

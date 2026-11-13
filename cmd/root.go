@@ -5,11 +5,13 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/Panandika/notion-tui/internal/config"
 	"github.com/Panandika/notion-tui/internal/ui"
+	"github.com/Panandika/notion-tui/internal/ui/components"
 	"github.com/Panandika/notion-tui/internal/version"
 )
 
@@ -104,12 +106,18 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Ask the terminal for its background colour now, before the program
+	// takes over the keyboard (see components.SetLightBackground).
+	components.SetLightBackground(!lipgloss.HasDarkBackground())
+
 	// Create and run the TUI
 	model := ui.NewModel(ui.NewModelInput{
 		Config: cfg,
 		Cache:  nil, // Will use default cache
 	})
-	p := tea.NewProgram(model)
+	// The alternate screen gives the app the whole terminal and puts the
+	// user's previous screen back on exit and around the external editor.
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err = p.Run()
 	return err
 }
