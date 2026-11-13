@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
@@ -240,4 +241,164 @@ func TestModel_DetailResultsReachTheDetailPageFromAnyPage(t *testing.T) {
 	detail := m.pages[PageDetail].(*pages.DetailPage)
 	assert.False(t, detail.IsLoading())
 	assert.Equal(t, "late content", detail.Markdown())
+}
+
+func TestModel_DatabaseRowOpensThatPage(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+
+	// The list page reports the chosen row by its Notion page ID
+	updated, cmd := m.Update(pages.NewNavigationMsg("4169a22b-64ff-803c-af88-e10404de525f"))
+	m = updated.(AppModel)
+
+	require.Equal(t, PageDetail, m.currentPage)
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	require.True(t, ok)
+	assert.Equal(t, "4169a22b-64ff-803c-af88-e10404de525f", detail.PageID())
+	assert.NotNil(t, cmd, "the page starts loading")
+	assert.NotContains(t, m.View(), "not found")
+}
+
+func TestModel_PaletteSearchOpensWorkspaceSearch(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+
+	updated, _ := m.Update(components.CommandExecutedMsg{ActionType: "search"})
+	m = updated.(AppModel)
+
+	assert.Equal(t, PageWorkspaceSearch, m.currentPage)
+	assert.Contains(t, m.View(), "Search (Workspace)")
+	assert.True(t, m.navigator.CanGoBack())
+
+	// The search box has focus, so typed letters are text, not shortcuts
+	updated, cmd := m.Update(runeKey('q'))
+	m = updated.(AppModel)
+	assert.False(t, isQuit(cmd))
+	assert.Equal(t, PageWorkspaceSearch, m.currentPage)
+}
+
+func TestModel_SearchResultRouting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		objectType string
+		wantPage   PageID
+	}{
+		{name: "page result opens the page", objectType: "page", wantPage: PageDetail},
+		{name: "database result opens its row list", objectType: "database", wantPage: PageList},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newActionTestModel(t)
+			updated, _ := m.Update(components.CommandExecutedMsg{ActionType: "search"})
+			m = updated.(AppModel)
+
+			updated, cmd := m.Update(pages.SearchNavigationMsg{ID: "target-id", ObjectType: tt.objectType})
+			m = updated.(AppModel)
+
+			assert.Equal(t, tt.wantPage, m.currentPage)
+			assert.NotNil(t, cmd)
+			if tt.objectType == "database" {
+				assert.Equal(t, "target-id", m.currentDBID)
+			}
+		})
+	}
+}
+
+func TestModel_SwitchDatabaseFlow(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+
+	updated, _ := m.Update(components.CommandExecutedMsg{ActionType: "switch-db"})
+	m = updated.(AppModel)
+	require.Equal(t, PageDatabaseList, m.currentPage)
+	assert.Contains(t, m.View(), "Test DB")
+
+	updated, cmd := m.Update(pages.DatabaseSelectedMsg{DatabaseID: "other-db"})
+	m = updated.(AppModel)
+
+	assert.Equal(t, PageList, m.currentPage)
+	assert.Equal(t, "other-db", m.currentDBID)
+	assert.NotNil(t, cmd, "the new database's rows start loading")
+	assert.False(t, m.navigator.CanGoBack(), "a database switch starts a fresh history")
+}
+
+func TestModel_RefreshCommand(t *testing.T) {
+	t.Parallel()
+
+	t.Run("on a page reloads it", func(t *testing.T) {
+		t.Parallel()
+		m := newActionTestModel(t)
+		m.navigateToDetail("page-1")
+		updated, _ := m.Update(pages.NewLoadedMsgForTest("page-1", "content"))
+		m = updated.(AppModel)
+
+		cmd := m.handleCommandExecution(components.CommandExecutedMsg{ActionType: "refresh"})
+
+		assert.NotNil(t, cmd)
+		assert.True(t, m.pages[PageDetail].(*pages.DetailPage).IsLoading())
+	})
+
+	t.Run("on the dashboard does nothing", func(t *testing.T) {
+		t.Parallel()
+		m := newActionTestModel(t)
+
+		assert.Nil(t, m.handleCommandExecution(components.CommandExecutedMsg{ActionType: "refresh"}))
+	})
+}
+
+// listModel returns a model showing a database's rows.
+func listModel(t *testing.T) AppModel {
+	t.Helper()
+	m := newActionTestModel(t)
+	updated, _ := m.Update(pages.DatabaseSelectedMsg{DatabaseID: "db"})
+	m = updated.(AppModel)
+	require.Equal(t, PageList, m.currentPage)
+	list := m.pages[PageList].(*pages.ListPage)
+	list.SetPages([]pages.Page{pages.NewPage("row-1", "Quarterly report", "", time.Now())})
+	return m
+}
+
+func TestModel_RowFilterTypingIsNotGlobalShortcuts(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	updated, _ := m.Update(runeKey('/'))
+	m = updated.(AppModel)
+	list := m.pages[PageList].(*pages.ListPage)
+	require.True(t, list.CapturesInput())
+
+	for _, key := range []tea.KeyMsg{runeKey('q'), runeKey('?'), {Type: tea.KeyTab}} {
+		updated, cmd := m.Update(key)
+		m = updated.(AppModel)
+		assert.False(t, isQuit(cmd), "%q must be filter text", key.String())
+	}
+
+	assert.Equal(t, PageList, m.currentPage)
+	assert.False(t, m.showHelp)
+	assert.False(t, m.sidebarFocus)
+}
+
+func TestModel_EscWithTreeFocusedDoesNotReachTheList(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	// Apply a filter, then move focus to the tree
+	for _, key := range []tea.KeyMsg{runeKey('/'), runeKey('Q'), {Type: tea.KeyEnter}, {Type: tea.KeyTab}} {
+		updated, _ := m.Update(key)
+		m = updated.(AppModel)
+	}
+	require.True(t, m.sidebarFocus)
+	view := m.pages[PageList].(*pages.ListPage).View()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+
+	assert.Equal(t, view, m.pages[PageList].(*pages.ListPage).View(), "esc in the tree must not change the row list")
 }

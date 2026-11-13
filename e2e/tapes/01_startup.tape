@@ -1,39 +1,33 @@
-# VHS Tape: Startup and Quit
-# This tape demonstrates basic application startup and quit functionality
+# VHS tape: Startup and help
+# Starts the app, shows the dashboard and the key reference, then quits.
+#
+# Run from the repository root, with the token in the environment:
+#   NOTION_TUI_NOTION_TOKEN=... vhs e2e/tapes/01_startup.tape
+# See e2e/tapes/README.md. This tape only reads from Notion.
 
-Output 01_startup.gif
+Output e2e/out/01_startup.gif
+Output e2e/out/01_startup.ascii
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1200
+Set Width 1400
 Set Height 800
 Set Theme "Dracula"
+Set TypingSpeed 60ms
 
-# Set environment variables for the test
-# Note: Replace with your actual token and database ID for recording
-Env NOTION_TUI_NOTION_TOKEN "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-Env NOTION_TUI_DATABASE_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-Type "# Notion TUI - Startup Demo" Sleep 500ms Enter
+Type "./notion-tui" Enter
+Wait+Screen@30s /Welcome to Notion TUI/
 Sleep 1s
 
-Type "# Starting the application..." Sleep 500ms Enter
-Sleep 500ms
-
-# Start the application
-Type "./notion-tui" Enter
+# Key reference
+Type "?"
+Wait+Screen@5s /Keyboard shortcuts/
 Sleep 3s
 
-# Wait for UI to fully load
-Sleep 2s
-
-# Show the page list loaded
-Sleep 2s
-
-# Type 'q' to quit
-Type "q"
+# Any key closes it
+Escape
 Sleep 1s
 
-# Done
-Type "echo 'Startup and quit test complete!'" Enter
+# Quit
+Type "q"
 Sleep 1s

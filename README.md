@@ -234,20 +234,16 @@ go vet ./...
 golangci-lint run
 ```
 
-### VHS Integration Tests
+### End-to-end tapes
 
-Integration tests use [VHS](https://github.com/charmbracelet/vhs) to record terminal sessions:
+[VHS](https://github.com/charmbracelet/vhs) tapes in `e2e/tapes/` drive the real app and record the result. They only read from Notion and take the token from the environment:
 
 ```bash
-# Install VHS
-go install github.com/charmbracelet/vhs@latest
-
-# Record a tape
-cd e2e/tapes
-vhs 01_startup.tape
-
-# Output: 01_startup.gif
+go build -o notion-tui .
+NOTION_TUI_NOTION_TOKEN="ntn_..." vhs e2e/tapes/01_startup.tape
 ```
+
+See [e2e/tapes/README.md](e2e/tapes/README.md) for requirements and a Docker command.
 
 ## Architecture
 

@@ -33,3 +33,5 @@ go.work.sum
 .plan/
 CLAUDE.md
 .claude
+# VHS recordings
+e2e/out/

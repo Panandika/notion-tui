@@ -1,64 +1,52 @@
-# VHS Tape: Search Functionality
-# This tape demonstrates the search feature in the sidebar
+# VHS tape: Search
+# Searches the workspace, opens a result and scrolls it.
+#
+# Run from the repository root, with the token in the environment:
+#   NOTION_TUI_NOTION_TOKEN=... vhs e2e/tapes/03_search.tape
+# See e2e/tapes/README.md. This tape only reads from Notion.
 
-Output 03_search.gif
+Output e2e/out/03_search.gif
+Output e2e/out/03_search.ascii
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1200
+Set Width 1400
 Set Height 800
 Set Theme "Dracula"
+Set TypingSpeed 60ms
 
-# Set environment variables
-Env NOTION_TUI_NOTION_TOKEN "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-Env NOTION_TUI_DATABASE_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-Type "# Notion TUI - Search Demo" Sleep 500ms Enter
-Sleep 1s
-
-# Start the application
 Type "./notion-tui" Enter
-Sleep 3s
-
-# Wait for page list to load
+Wait+Screen@30s /Welcome to Notion TUI/
 Sleep 1s
-
-# Press '/' to focus search
-Type "/"
+# Find a page through search. "Getting Started" exists in every new Notion
+# workspace; change the query if yours has no such page.
+Ctrl+P
 Sleep 500ms
-
-# Type search query (example: "task")
-Type "task"
+Enter
+Wait+Screen@10s /Search \(Workspace\)/
+Type "Getting Started"
+Enter
+Wait+Screen@30s /Search Results/
 Sleep 1s
-
-# View filtered results
+Enter
+# The page content is drawn in a box once it has loaded
+Wait+Screen@30s /╰─/
 Sleep 2s
 
-# Clear search by deleting characters
-Type "Backspace"
-Sleep 300ms
-Type "Backspace"
-Sleep 300ms
-Type "Backspace"
-Sleep 300ms
-Type "Backspace"
-Sleep 300ms
-
-# View all results again
+# Scroll the page
+Type "jjjj"
+Sleep 1s
+Type "kkkk"
 Sleep 1s
 
-# Try another search
-Type "note"
+# Back to the results, then to the dashboard
+Escape
 Sleep 1s
-Sleep 2s
-
-# Press Esc to exit search
-Type "Escape"
+Escape
+Sleep 500ms
+Escape
 Sleep 1s
 
 # Quit
 Type "q"
-Sleep 1s
-
-Type "echo 'Search test complete!'" Enter
 Sleep 1s

@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -218,10 +219,31 @@ func (pv PageViewer) SetMarkdown(markdown string) tea.Cmd {
 	}
 }
 
+// lightBackground records whether the terminal has a light background.
+var lightBackground atomic.Bool
+
+// SetLightBackground tells the Markdown renderer which colour scheme to use.
+//
+// Call it once before the program starts. Detecting the background means
+// asking the terminal and reading its reply from standard input; doing that
+// while the program runs races with keyboard input: the reply can be lost
+// (the render hangs) or be read as key presses.
+func SetLightBackground(light bool) {
+	lightBackground.Store(light)
+}
+
+// markdownStyle returns the glamour style for the terminal's background.
+func markdownStyle() string {
+	if lightBackground.Load() {
+		return "light"
+	}
+	return "dark"
+}
+
 // renderMarkdown styles Markdown for the terminal at the viewer's width.
 func renderMarkdown(markdown string, viewerWidth int) tea.Msg {
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(markdownStyle()),
 		glamour.WithWordWrap(viewportWidth(viewerWidth)), // Fit inside border and padding
 	)
 	if err != nil {

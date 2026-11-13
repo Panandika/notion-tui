@@ -348,6 +348,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.pageBusy() {
 				return m, nil
 			}
+			// With the tree focused and nowhere to go back to, esc must not
+			// reach the page, where it would act unseen (clearing a filter).
+			if m.showSidebar && m.sidebarFocus && !m.navigator.CanGoBack() {
+				return m, nil
+			}
 			// Handle back navigation for other pages
 			if m.navigator.CanGoBack() {
 				previousPage, ok := m.navigator.Back()
@@ -359,8 +364,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case pages.NavigationMsg:
-		// Handle navigation to a new page
-		return m, m.navigateTo(PageID(msg.PageID()))
+		// A database row was chosen on the list page: its ID is a Notion
+		// page ID, so open that page
+		if m.pageBusy() {
+			return m, nil
+		}
+		return m, m.navigateToDetail(msg.PageID())
 
 	case components.ContentLoadedMsg, components.ErrorMsg:
 		// Rendered content belongs to the detail page's viewer. Deliver it

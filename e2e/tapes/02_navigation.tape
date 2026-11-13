@@ -1,65 +1,48 @@
-# VHS Tape: Navigation Workflow
-# This tape demonstrates navigating through pages with keyboard controls
+# VHS tape: Navigation
+# Moves through the workspace tree, opens the first item and goes back.
+#
+# Run from the repository root, with the token in the environment:
+#   NOTION_TUI_NOTION_TOKEN=... vhs e2e/tapes/02_navigation.tape
+# See e2e/tapes/README.md. This tape only reads from Notion.
 
-Output 02_navigation.gif
+Output e2e/out/02_navigation.gif
+Output e2e/out/02_navigation.ascii
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1200
+Set Width 1400
 Set Height 800
 Set Theme "Dracula"
+Set TypingSpeed 60ms
 
-# Set environment variables
-Env NOTION_TUI_NOTION_TOKEN "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-Env NOTION_TUI_DATABASE_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-Type "# Notion TUI - Navigation Demo" Sleep 500ms Enter
-Sleep 1s
-
-# Start the application
 Type "./notion-tui" Enter
-Sleep 3s
-
-# Navigate down with 'j' key (Vim-style)
-Type "j"
-Sleep 500ms
-Type "j"
-Sleep 500ms
-Type "j"
-Sleep 500ms
-
-# Navigate up with 'k' key
-Type "k"
-Sleep 500ms
-
-# Select page with Enter
-Type "Enter"
-Sleep 2s
-
-# View the page detail
-Sleep 2s
-
-# Go back with Esc
-Type "Escape"
+Wait+Screen@30s /Welcome to Notion TUI/
 Sleep 1s
 
-# Navigate to another page
-Type "j"
+# Give the workspace tree time to load, then focus it and move around
+Sleep 3s
+Tab
 Sleep 500ms
-Type "j"
+Down 3
+Sleep 500ms
+Up 3
 Sleep 500ms
 
-# Select again
-Type "Enter"
-Sleep 2s
+# Enter on the first item: a page opens in the viewer, a database lists its
+# rows, an item with children expands
+Enter
+Sleep 5s
 
-# Go back
-Type "Escape"
+# Hide and show the sidebar (hiding it also moves focus back to the page)
+Ctrl+B
+Sleep 1500ms
+Ctrl+B
+Sleep 1s
+
+# Go back, if there is somewhere to go back to
+Escape
 Sleep 1s
 
 # Quit
 Type "q"
-Sleep 1s
-
-Type "echo 'Navigation test complete!'" Enter
 Sleep 1s

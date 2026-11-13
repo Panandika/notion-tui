@@ -77,7 +77,7 @@ type editSavedMsg struct {
 
 // errPageChanged means the page was modified in Notion while it was open in
 // the editor, so replacing its whole content would discard that change.
-var errPageChanged = errors.New("the page changed in Notion while you were editing")
+var errPageChanged = errors.New("the page changed in Notion while you were editing; edit again from the current version and copy your changes over")
 
 // pageCreatedResultMsg is the result of creating a new page.
 type pageCreatedResultMsg struct {
@@ -516,6 +516,9 @@ func (dp *DetailPage) savePageCmd(original, edited string) tea.Cmd {
 			// Edits locate their text in the page, so they fail on their own
 			// if that text changed in Notion meanwhile.
 			result, err = client.UpdatePageMarkdown(ctx, pageID, updates)
+			if isNoMatchError(err) {
+				err = errPageChanged
+			}
 		} else {
 			// A full replace has no such protection: check first that the
 			// page is still what the editor started from.
@@ -539,6 +542,17 @@ func (dp *DetailPage) savePageCmd(original, edited string) tea.Cmd {
 			skipped:   len(result.Warnings),
 		}
 	}
+}
+
+// isNoMatchError reports whether the API rejected an edit because the text
+// it should replace is no longer in the page. Edits are built from the page
+// as it was when the editor opened, so this means the page changed since.
+func isNoMatchError(err error) bool {
+	var apiErr *notionapi.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == "validation_error" && strings.Contains(apiErr.Message, "No matches found")
 }
 
 // createPageCmd creates a new child page from the editor's content.

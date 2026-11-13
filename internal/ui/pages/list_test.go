@@ -3,12 +3,15 @@ package pages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jomei/notionapi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Panandika/notion-tui/internal/cache"
 	"github.com/Panandika/notion-tui/internal/notion"
@@ -411,7 +414,7 @@ func TestListPage_View(t *testing.T) {
 			name:        "shows normal state",
 			loading:     false,
 			err:         nil,
-			expectMatch: "Select a page from the sidebar",
+			expectMatch: "This database has no pages",
 		},
 	}
 
@@ -975,4 +978,143 @@ func TestListPage_RefreshClearsPagination(t *testing.T) {
 
 	assert.False(t, lp.HasMore())
 	assert.Equal(t, "", lp.NextCursor())
+}
+
+func TestListPage_ShowsDatabaseRows(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 24, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{
+		NewPage("row-1", "Write report", "In progress", time.Now()),
+		NewPage("row-2", "Book flights", "To do", time.Now()),
+	}})
+
+	view := lp.View()
+
+	assert.Contains(t, view, "Write report", "rows must be visible on the page itself")
+	assert.Contains(t, view, "Book flights")
+	assert.NotContains(t, view, "Select a page from the sidebar")
+}
+
+func TestListPage_EnterOpensTheSelectedRow(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 24, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{
+		NewPage("row-1", "Write report", "", time.Now()),
+		NewPage("row-2", "Book flights", "", time.Now()),
+	}})
+
+	lp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	selected := firstMsgOfType[components.ItemSelectedMsg](t, cmd)
+
+	_, cmd = lp.Update(selected)
+	require.NotNil(t, cmd)
+	nav, ok := cmd().(NavigationMsg)
+	require.True(t, ok)
+	assert.Equal(t, "row-2", nav.PageID())
+}
+
+func TestListPage_FilterTypingIsNotShortcuts(t *testing.T) {
+	t.Parallel()
+
+	client := &MockNotionClient{}
+	queries := 0
+	client.QueryDatabaseFunc = func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+		queries++
+		return &notionapi.DatabaseQueryResponse{}, nil
+	}
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 24, NotionClient: client, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{NewPage("row-1", "Write report", "", time.Now())}})
+	require.False(t, lp.CapturesInput())
+
+	lp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	require.True(t, lp.CapturesInput(), "typing a filter must capture the keyboard")
+
+	// "r" is the refresh shortcut; while filtering it is just a letter
+	_, cmd := lp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	runAll(cmd)
+
+	assert.Zero(t, queries, "typing r in the filter must not refresh")
+	assert.False(t, lp.loading)
+}
+
+// firstMsgOfType runs a command (unpacking batches) and returns the first
+// message of type T it produces.
+func firstMsgOfType[T any](t *testing.T, cmd tea.Cmd) T {
+	t.Helper()
+	for _, msg := range collectMsgs(cmd) {
+		if typed, ok := msg.(T); ok {
+			return typed
+		}
+	}
+	var zero T
+	t.Fatalf("no message of type %T produced", zero)
+	return zero
+}
+
+// collectMsgs runs a command and returns its messages, unpacking batches.
+func collectMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, inner := range batch {
+			out = append(out, collectMsgs(inner)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func runAll(cmd tea.Cmd) {
+	collectMsgs(cmd)
+}
+
+func TestListPage_FitsItsSize(t *testing.T) {
+	t.Parallel()
+
+	var rows []Page
+	for i := 0; i < 40; i++ {
+		rows = append(rows, NewPage("row", "A row title that is reasonably long", "To do", time.Now()))
+	}
+
+	for _, size := range []struct{ width, height int }{
+		{80, 24}, {80, 14}, {80, 10}, {80, 6}, {30, 24}, {20, 8},
+	} {
+		for _, filtering := range []bool{false, true} {
+			name := fmt.Sprintf("%dx%d filtering=%v", size.width, size.height, filtering)
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				lp := NewListPage(NewListPageInput{Width: size.width, Height: size.height, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+				lp.Update(pagesLoadedMsg{pages: rows})
+				if filtering {
+					lp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+				}
+
+				view := lp.View()
+
+				// A taller or wider view pushes the top of the screen out of sight.
+				assert.LessOrEqual(t, lipgloss.Height(view), size.height)
+				assert.LessOrEqual(t, lipgloss.Width(view), size.width)
+			})
+		}
+	}
+}
+
+func TestListPage_TitleVisibleAtNormalSize(t *testing.T) {
+	t.Parallel()
+
+	lp := NewListPage(NewListPageInput{Width: 80, Height: 24, NotionClient: &MockNotionClient{}, DatabaseID: "db"})
+	lp.Update(pagesLoadedMsg{pages: []Page{NewPage("row", "A row", "To do", time.Now())}})
+
+	view := lp.View()
+
+	assert.Contains(t, view, "Pages")
+	assert.NotContains(t, view, "? more", "? belongs to the app's help, not the list's")
 }

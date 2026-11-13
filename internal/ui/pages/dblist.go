@@ -109,7 +109,9 @@ func NewDatabaseListPage(input NewDatabaseListPageInput) DatabaseListPage {
 	l := list.New(items, delegate, input.Width-4, input.Height-6)
 	l.Title = "Select Database"
 	l.SetShowStatusBar(false)
-	l.SetShowHelp(true)
+	// No built-in help line: it advertises "? more", but "?" opens the app's
+	// key reference. The status bar lists the keys.
+	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 
 	// Create status bar
@@ -117,7 +119,7 @@ func NewDatabaseListPage(input NewDatabaseListPageInput) DatabaseListPage {
 	statusBar.SetWidth(input.Width)
 	statusBar.SetMode(components.ModeBrowse)
 	statusBar.SetSyncStatus(components.StatusSynced)
-	statusBar.SetHelpText("Enter: select database | ESC: back")
+	statusBar.SetHelpText("↑/↓: move | enter: select | /: filter | esc: back")
 
 	styles := DefaultDatabaseListPageStyles()
 	l.Styles.Title = styles.Title
