@@ -25,7 +25,7 @@ import (
 type ViewerInterface = components.ViewerInterface
 
 const (
-	detailHelpText = "e: edit | p: properties | t: to-dos | r: refresh | esc: back | ?: help"
+	detailHelpText = "e: edit | p: properties | t: to-dos | o: links | /: find | esc: back | ?: help"
 
 	// cacheFormat marks cache entries written by this version of the page
 	// loader. Entries without it (older block caches) are ignored.
@@ -169,8 +169,12 @@ type DetailPage struct {
 	dateCurrent string // Start date the prompt opened with
 	dateComplex bool   // The property also has a time or an end date
 	todos       []todoItem
-	inputErr    string // Problem with the last input or save, shown in the mode
-	notice      string // One-off message shown in the status bar
+	links       []notion.PageLink
+	searchInput textinput.Model
+	lastSearch  string
+	openURL     func(url string) error // Hands a web link to the browser
+	inputErr    string                 // Problem with the last input or save, shown in the mode
+	notice      string                 // One-off message shown in the status bar
 }
 
 // NewDetailPageInput contains the parameters for creating a DetailPage.
@@ -217,6 +221,7 @@ func NewDetailPage(input NewDetailPageInput) DetailPage {
 		runEditor:    runEditor,
 		exportDir:    input.ExportDir,
 		quickExit:    quickExitThreshold,
+		openURL:      openInBrowser,
 	}
 }
 
@@ -277,6 +282,13 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case todoSavedMsg:
 		return dp, dp.handleTodoSaved(msg)
 
+	case archivedMsg:
+		return dp, dp.handleArchived(msg)
+
+	case linkOpenedMsg:
+		dp.handleLinkOpened(msg)
+		return dp, nil
+
 	case exportDoneMsg:
 		if msg.pageID != dp.pageID {
 			return dp, nil
@@ -314,6 +326,23 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "t":
 			return dp, dp.StartTodos()
+
+		case "o":
+			return dp, dp.StartLinks()
+
+		case "/":
+			return dp, dp.StartSearch()
+
+		case "n":
+			dp.findNext(1)
+			return dp, nil
+
+		case "N":
+			dp.findNext(-1)
+			return dp, nil
+
+		case "D":
+			return dp, dp.StartArchive()
 
 		case "esc":
 			// Navigate back (use exported BackNavigationMsg)

@@ -103,6 +103,10 @@ Press `?` in the app for the full key reference.
 | `e` | Edit the page in your editor |
 | `p` | Change properties (database rows) |
 | `t` | Check or uncheck to-dos |
+| `o` | Follow a link: child page, database, mention or web link |
+| `[` / `]` | Back / forward through the pages you read (`Esc` also goes back) |
+| `/`, `n`, `N` | Find in page, next match, previous match |
+| `D` | Archive the page (asks first; restorable from Notion's trash) |
 | `Ctrl+N` | New page inside this page |
 | `r` | Reload from Notion |
 
@@ -400,8 +404,6 @@ Special thanks to:
 
 Planned next, roughly in order:
 
-- Follow links to child pages from the page view
-- Archive pages
 - Filter page and database lists
 - Configurable key bindings
 

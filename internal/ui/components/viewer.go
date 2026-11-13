@@ -2,12 +2,14 @@ package components
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jomei/notionapi"
 
 	"github.com/Panandika/notion-tui/internal/notion"
@@ -50,10 +52,13 @@ type PageViewer struct {
 	content  string
 	pageID   string
 	ready    bool
-	loading  bool
-	err      error
-	width    int
-	height   int
+
+	matches    []int // Lines of the content that contain the search text
+	matchIndex int
+	loading    bool
+	err        error
+	width      int
+	height     int
 }
 
 // The viewer draws a rounded border with padding around the viewport. Width
@@ -120,6 +125,13 @@ type ViewerInterface interface {
 	SetBlocks([]notionapi.Block) tea.Cmd
 	SetMarkdown(markdown string) tea.Cmd
 	SetSize(width, height int)
+	// Find looks for text in the shown content, jumps to the first match
+	// and returns how many lines match.
+	Find(query string) int
+	// FindNext jumps to the next (delta 1) or previous (delta -1) match and
+	// returns its position, starting at 1, and the total. Both are 0 when
+	// there is nothing to jump to.
+	FindNext(delta int) (position, total int)
 }
 
 // Update handles messages and updates the PageViewer state.
@@ -136,6 +148,7 @@ func (pv *PageViewer) Update(msg tea.Msg) (ViewerInterface, tea.Cmd) {
 		}
 
 		pv.content = msg.Content()
+		pv.matches = nil // Line numbers of old content mean nothing now
 		pv.viewport.SetContent(msg.Content())
 		pv.ready = true
 		pv.loading = false
@@ -256,6 +269,36 @@ func renderMarkdown(markdown string, viewerWidth int) tea.Msg {
 	}
 
 	return ContentLoadedMsg{content: rendered, err: nil}
+}
+
+// Find looks for text in the content, ignoring case and colours, and jumps
+// to the first matching line.
+func (pv *PageViewer) Find(query string) int {
+	pv.matches, pv.matchIndex = nil, 0
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return 0
+	}
+	for index, line := range strings.Split(pv.content, "\n") {
+		if strings.Contains(strings.ToLower(ansi.Strip(line)), query) {
+			pv.matches = append(pv.matches, index)
+		}
+	}
+	if len(pv.matches) > 0 {
+		pv.viewport.SetYOffset(pv.matches[0])
+	}
+	return len(pv.matches)
+}
+
+// FindNext jumps to the next or previous match, wrapping around.
+func (pv *PageViewer) FindNext(delta int) (position, total int) {
+	total = len(pv.matches)
+	if total == 0 {
+		return 0, 0
+	}
+	pv.matchIndex = ((pv.matchIndex+delta)%total + total) % total
+	pv.viewport.SetYOffset(pv.matches[pv.matchIndex])
+	return pv.matchIndex + 1, total
 }
 
 // SetContent directly sets the viewport content.

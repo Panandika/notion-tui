@@ -1,8 +1,11 @@
 package pages
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,4 +42,31 @@ func editorParts(getenv func(string) string) []string {
 		}
 	}
 	return []string{defaultEditor}
+}
+
+// openInBrowser hands a web link to the system's default browser. Only http
+// and https links are accepted, so page content cannot make the app launch
+// anything else.
+func openInBrowser(target string) error {
+	parsed, err := url.Parse(target)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("not a web link: %q", target)
+	}
+
+	program, args := "xdg-open", []string{parsed.String()}
+	switch runtime.GOOS {
+	case "darwin":
+		program = "open"
+	case "windows":
+		program, args = "rundll32", []string{"url.dll,FileProtocolHandler", parsed.String()}
+	}
+	// A fixed program gets the validated link as one argument; no shell is
+	// involved, so the link cannot inject a command.
+	cmd := exec.Command(program, args...) //nolint:gosec // G204: see comment above
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap the helper process once it exits; its result does not matter.
+	go func() { _ = cmd.Wait() }()
+	return nil
 }

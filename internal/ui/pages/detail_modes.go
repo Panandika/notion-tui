@@ -25,6 +25,9 @@ const (
 	modeOptions                      // Choices for one status or select property
 	modeDate                         // Text prompt for one date property
 	modeTodos                        // List of the page's to-dos
+	modeLinks                        // List of things to follow from the page
+	modeSearch                       // Text prompt for searching the page
+	modeConfirm                      // Yes/no question before archiving
 )
 
 const (
@@ -32,6 +35,9 @@ const (
 	optionsHelpText    = "↑/↓: move | enter: choose | esc: back"
 	dateHelpText       = "type YYYY-MM-DD, empty to clear | enter: save | esc: back"
 	todosHelpText      = "↑/↓: move | space: check / uncheck | esc: done"
+	linksHelpText      = "↑/↓: move | enter: open | esc: cancel"
+	searchHelpText     = "type text to find | enter: search | esc: cancel"
+	confirmHelpText    = "y: archive | n / esc: cancel"
 
 	// clearOption is the picker entry that unsets a select property.
 	clearOption = "(none)"
@@ -60,6 +66,33 @@ type todoSavedMsg struct {
 	err       error
 }
 
+// OpenLinkMsg asks the root model to open a Notion page or database that
+// the current page links to.
+type OpenLinkMsg struct {
+	ID       string
+	Database bool
+}
+
+// PageArchivedMsg is emitted after the page was moved to Notion's trash.
+type PageArchivedMsg struct {
+	ID string
+}
+
+// archivedMsg is the result of archiving the page.
+type archivedMsg struct {
+	pageID string
+	err    error
+}
+
+// linkOpenedMsg is the result of handing a web link to the browser.
+type linkOpenedMsg struct {
+	pageID string
+	url    string
+	err    error
+}
+
+func (archivedMsg) detailResult()      {}
+func (linkOpenedMsg) detailResult()    {}
 func (schemaLoadedMsg) detailResult()  {}
 func (propertySavedMsg) detailResult() {}
 func (todoSavedMsg) detailResult()     {}
@@ -294,6 +327,12 @@ func (dp *DetailPage) setMode(mode detailMode) {
 		dp.statusBar.SetHelpText(dateHelpText)
 	case modeTodos:
 		dp.statusBar.SetHelpText(todosHelpText)
+	case modeLinks:
+		dp.statusBar.SetHelpText(linksHelpText)
+	case modeSearch:
+		dp.statusBar.SetHelpText(searchHelpText)
+	case modeConfirm:
+		dp.statusBar.SetHelpText(confirmHelpText)
 	default:
 		dp.statusBar.SetHelpText(detailHelpText)
 	}
@@ -316,9 +355,182 @@ func (dp *DetailPage) updateMode(msg tea.KeyMsg) tea.Cmd {
 		return dp.updateDate(msg)
 	case modeTodos:
 		return dp.updateTodos(msg)
+	case modeLinks:
+		return dp.updateLinks(msg)
+	case modeSearch:
+		return dp.updateSearch(msg)
+	case modeConfirm:
+		return dp.updateConfirm(msg)
 	default:
 		return nil
 	}
+}
+
+// StartLinks lists what can be followed from the page: child pages,
+// databases, mentions and web links.
+func (dp *DetailPage) StartLinks() tea.Cmd {
+	if !dp.ready() {
+		return nil
+	}
+	dp.links = notion.PageLinks(dp.markdown)
+	if len(dp.links) == 0 {
+		dp.setNotice("This page has no links to follow")
+		return nil
+	}
+	items := make([]components.PickerItem, 0, len(dp.links))
+	for _, link := range dp.links {
+		title := plainText(link.Title)
+		switch link.Kind {
+		case notion.LinkPage:
+			items = append(items, components.PickerItem{Label: "📄 " + title})
+		case notion.LinkDatabase:
+			items = append(items, components.PickerItem{Label: "🗂 " + title})
+		default:
+			items = append(items, components.PickerItem{Label: "↗ " + title, Detail: link.URL})
+		}
+	}
+	dp.picker = components.NewPicker("Links", items)
+	dp.setMode(modeLinks)
+	return nil
+}
+
+func (dp *DetailPage) updateLinks(msg tea.KeyMsg) tea.Cmd {
+	if dp.picker.HandleKey(msg) {
+		return nil
+	}
+	switch msg.String() {
+	case "esc", "q":
+		dp.setMode(modeView)
+		return nil
+	case "enter":
+		index := dp.picker.Cursor()
+		if index >= len(dp.links) {
+			return nil
+		}
+		link := dp.links[index]
+		dp.setMode(modeView)
+		if link.Kind == notion.LinkWeb {
+			pageID := dp.pageID
+			opener := dp.openURL
+			return func() tea.Msg {
+				return linkOpenedMsg{pageID: pageID, url: link.URL, err: opener(link.URL)}
+			}
+		}
+		open := OpenLinkMsg{ID: link.ID, Database: link.Kind == notion.LinkDatabase}
+		return func() tea.Msg { return open }
+	}
+	return nil
+}
+
+// StartSearch opens the prompt for finding text in the page.
+func (dp *DetailPage) StartSearch() tea.Cmd {
+	if !dp.ready() || dp.viewer == nil {
+		return nil
+	}
+	input := textinput.New()
+	input.Prompt = "Find: "
+	input.CharLimit = 100
+	input.SetValue(dp.lastSearch)
+	input.CursorEnd()
+	input.Focus()
+	dp.searchInput = input
+	dp.setMode(modeSearch)
+	return nil
+}
+
+func (dp *DetailPage) updateSearch(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		dp.setMode(modeView)
+		return nil
+	case "enter":
+		query := strings.TrimSpace(dp.searchInput.Value())
+		dp.setMode(modeView)
+		if query == "" {
+			return nil
+		}
+		dp.lastSearch = query
+		if total := dp.viewer.Find(query); total > 0 {
+			dp.setNotice(fmt.Sprintf("Match 1 of %d for %q | n: next | N: previous", total, query))
+		} else {
+			dp.setNotice(fmt.Sprintf("No match for %q", query))
+		}
+		return nil
+	}
+	var cmd tea.Cmd
+	dp.searchInput, cmd = dp.searchInput.Update(msg)
+	return cmd
+}
+
+// findNext jumps to the next or previous match of the last search.
+func (dp *DetailPage) findNext(delta int) {
+	if dp.viewer == nil || dp.lastSearch == "" {
+		dp.setNotice("Nothing searched yet: press / to find text")
+		return
+	}
+	position, total := dp.viewer.FindNext(delta)
+	if total == 0 {
+		dp.setNotice(fmt.Sprintf("No match for %q", dp.lastSearch))
+		return
+	}
+	dp.setNotice(fmt.Sprintf("Match %d of %d for %q | n: next | N: previous", position, total, dp.lastSearch))
+}
+
+// StartArchive asks before moving the page to Notion's trash.
+func (dp *DetailPage) StartArchive() tea.Cmd {
+	if !dp.ready() {
+		return nil
+	}
+	dp.setMode(modeConfirm)
+	return nil
+}
+
+func (dp *DetailPage) updateConfirm(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "y", "Y":
+		dp.busy = true
+		dp.statusBar.SetSyncStatus(components.StatusSyncing)
+		pageID := dp.pageID
+		client := dp.notionClient
+		return func() tea.Msg {
+			_, err := client.UpdatePage(context.Background(), pageID, &notionapi.PageUpdateRequest{Archived: true})
+			return archivedMsg{pageID: pageID, err: err}
+		}
+	case "n", "N", "esc", "q":
+		dp.setMode(modeView)
+	}
+	return nil
+}
+
+func (dp *DetailPage) handleArchived(msg archivedMsg) tea.Cmd {
+	if msg.pageID != dp.pageID {
+		return nil
+	}
+	dp.busy = false
+	dp.setMode(modeView)
+	if msg.err != nil {
+		dp.statusBar.SetSyncStatus(components.StatusError)
+		dp.setNotice("Could not archive: " + msg.err.Error())
+		return nil
+	}
+	dp.statusBar.SetSyncStatus(components.StatusSynced)
+	// The cached copy must not bring the page back
+	if dp.cache != nil {
+		_ = dp.cache.Delete(dp.pageID)
+	}
+	archived := PageArchivedMsg{ID: dp.pageID}
+	return func() tea.Msg { return archived }
+}
+
+func (dp *DetailPage) handleLinkOpened(msg linkOpenedMsg) {
+	if msg.pageID != dp.pageID {
+		return
+	}
+	if msg.err != nil {
+		dp.setNotice(fmt.Sprintf("Could not open the browser (%v). Link: %s", msg.err, msg.url))
+		return
+	}
+	dp.setNotice("Opened in the browser")
 }
 
 func (dp *DetailPage) updateProperties(msg tea.KeyMsg) tea.Cmd {
@@ -603,19 +815,24 @@ func (dp *DetailPage) renderMode() string {
 		footer = append(footer, "", errorStyle.Render(dp.inputErr))
 	}
 
+	bold := lipgloss.NewStyle().Bold(true)
 	var body string
-	if dp.mode == modeDate {
-		lines := []string{
-			lipgloss.NewStyle().Bold(true).Render("Change date"),
-			"",
-			dp.dateInput.View(),
-		}
+	switch dp.mode {
+	case modeSearch:
+		body = lipgloss.JoinVertical(lipgloss.Left, bold.Render("Find in page"), "", dp.searchInput.View())
+	case modeConfirm:
+		body = lipgloss.JoinVertical(lipgloss.Left,
+			bold.Render(fmt.Sprintf("Archive %q?", dp.Title())), "",
+			"The page moves to Notion's trash, where it can be restored.", "",
+			"y: archive    n: keep")
+	case modeDate:
+		lines := []string{bold.Render("Change date"), "", dp.dateInput.View()}
 		if dp.dateComplex {
 			lines = append(lines, "", mutedStyle.Render(
 				"Now: "+dp.editing.Text+". Saving a different date replaces the time and end date."))
 		}
 		body = lipgloss.JoinVertical(lipgloss.Left, lines...)
-	} else {
+	default:
 		body = dp.picker.View(dp.width-4, height-2-len(footer))
 	}
 

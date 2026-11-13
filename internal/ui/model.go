@@ -54,6 +54,11 @@ type AppModel struct {
 
 	// Help state
 	showHelp bool
+
+	// Pages visited one after another in the page view, as Notion page IDs.
+	// esc and "[" walk back through them, "]" forward again.
+	backTrail    []string
+	forwardTrail []string
 }
 
 // NewModelInput contains the parameters for creating a new AppModel.
@@ -246,6 +251,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case pages.OpenLinkMsg:
+		if m.pageBusy() {
+			return m, nil
+		}
+		if msg.Database {
+			return m, m.switchDatabase(msg.ID)
+		}
+		return m, m.navigateToDetail(msg.ID)
+
+	case pages.PageArchivedMsg:
+		// The page is gone: leave it, and reload what listed it
+		m.statusBar.SetHelpText("Page archived")
+		return m, tea.Batch(m.leaveArchivedPage(), m.fetchWorkspaceTreeCmd())
+
 	case pages.ListResultMsg:
 		// Rows loaded or created by the list page go to the list page,
 		// whichever page is in front.
@@ -354,6 +373,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle other mode-specific keys
 		switch msg.String() {
 
+		case "[":
+			if cmd, ok := m.trailBack(); ok {
+				return m, cmd
+			}
+
+		case "]":
+			if cmd, ok := m.trailForward(); ok {
+				return m, cmd
+			}
+
 		case "esc":
 			// On search page, let it handle Esc first (e.g., to clear filter)
 			// then fall through to page delegation which will handle back navigation
@@ -367,6 +396,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// reach the page, where it would act unseen (clearing a filter).
 			if m.showSidebar && m.sidebarFocus && !m.navigator.CanGoBack() {
 				return m, nil
+			}
+			// In the page view, first walk back through the pages visited
+			if cmd, ok := m.trailBack(); ok {
+				return m, cmd
 			}
 			// Handle back navigation for other pages
 			if m.navigator.CanGoBack() {
@@ -657,15 +690,44 @@ func (m *AppModel) navigateTo(pageID PageID) tea.Cmd {
 	return nil
 }
 
-// navigateToDetail navigates to the detail page for a specific Notion page.
+// navigateToDetail opens a Notion page in the page view. Coming from another
+// page in the page view, the one being left is remembered so esc returns to
+// it.
 func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
-	// Create viewer for the detail page
+	if current, ok := m.openPageID(); ok {
+		if current == notionPageID {
+			return nil
+		}
+		m.backTrail = append(m.backTrail, current)
+		m.forwardTrail = nil
+		return m.showPage(notionPageID)
+	}
+
+	// Entering the page view from elsewhere starts a new trail
+	m.backTrail, m.forwardTrail = nil, nil
+	m.installDetailPage(notionPageID)
+	return m.navigateTo(PageDetail)
+}
+
+// openPageID returns the Notion page shown in the page view, if the page
+// view is what is on screen.
+func (m *AppModel) openPageID() (string, bool) {
+	if m.currentPage != PageDetail {
+		return "", false
+	}
+	detail, ok := m.pages[PageDetail].(*pages.DetailPage)
+	if !ok {
+		return "", false
+	}
+	return detail.PageID(), true
+}
+
+// installDetailPage creates the page view for a Notion page.
+func (m *AppModel) installDetailPage(notionPageID string) *pages.DetailPage {
 	viewer := components.NewPageViewer(components.NewPageViewerInput{
 		Width:  m.contentWidth(),
 		Height: m.contentHeight() - 1, // Reserve 1 line for the page status bar
 	})
-
-	// Create or update detail page
 	detailPage := pages.NewDetailPage(pages.NewDetailPageInput{
 		Width:        m.contentWidth(),
 		Height:       m.contentHeight(),
@@ -675,9 +737,57 @@ func (m *AppModel) navigateToDetail(notionPageID string) tea.Cmd {
 		PageID:       notionPageID,
 	})
 	m.pages[PageDetail] = &detailPage
+	return &detailPage
+}
 
-	// Navigate to detail page
-	return m.navigateTo(PageDetail)
+// showPage replaces the page in the page view without touching the screen
+// history: the page view stays one entry there however many pages are read.
+func (m *AppModel) showPage(notionPageID string) tea.Cmd {
+	return m.installDetailPage(notionPageID).Init()
+}
+
+// trailBack returns to the page read before the current one. ok is false
+// when the page view is not on screen or there is no earlier page.
+func (m *AppModel) trailBack() (tea.Cmd, bool) {
+	current, onPage := m.openPageID()
+	if !onPage || len(m.backTrail) == 0 || m.pageBusy() {
+		return nil, false
+	}
+	previous := m.backTrail[len(m.backTrail)-1]
+	m.backTrail = m.backTrail[:len(m.backTrail)-1]
+	m.forwardTrail = append(m.forwardTrail, current)
+	return m.showPage(previous), true
+}
+
+// trailForward undoes trailBack.
+func (m *AppModel) trailForward() (tea.Cmd, bool) {
+	current, onPage := m.openPageID()
+	if !onPage || len(m.forwardTrail) == 0 || m.pageBusy() {
+		return nil, false
+	}
+	next := m.forwardTrail[len(m.forwardTrail)-1]
+	m.forwardTrail = m.forwardTrail[:len(m.forwardTrail)-1]
+	m.backTrail = append(m.backTrail, current)
+	return m.showPage(next), true
+}
+
+// leaveArchivedPage moves off a page that no longer exists: to the page read
+// before it, or else to the screen the page view was opened from.
+func (m *AppModel) leaveArchivedPage() tea.Cmd {
+	m.forwardTrail = nil
+	if len(m.backTrail) > 0 {
+		previous := m.backTrail[len(m.backTrail)-1]
+		m.backTrail = m.backTrail[:len(m.backTrail)-1]
+		return m.showPage(previous)
+	}
+	delete(m.pages, PageDetail)
+	previousPage, ok := m.navigator.Back()
+	if !ok {
+		previousPage = PageDashboard
+		m.navigator.Reset(PageDashboard)
+	}
+	m.currentPage = previousPage
+	return m.onReturnTo(previousPage)
 }
 
 // goBack navigates to the previous page in history.

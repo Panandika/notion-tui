@@ -546,3 +546,136 @@ func TestModel_PaletteStaysClosedOverListsAndPrompts(t *testing.T) {
 		assert.True(t, m.showPalette)
 	})
 }
+
+// openPages opens Notion pages one after another, as following links does.
+func openPages(t *testing.T, m AppModel, ids ...string) AppModel {
+	t.Helper()
+	for _, id := range ids {
+		updated, _ := m.Update(pages.OpenLinkMsg{ID: id})
+		m = updated.(AppModel)
+		updated, _ = m.Update(pages.NewLoadedMsgForTest(id, "content of "+id))
+		m = updated.(AppModel)
+	}
+	return m
+}
+
+func shownPage(m AppModel) string {
+	return m.pages[PageDetail].(*pages.DetailPage).PageID()
+}
+
+func TestModel_PageHistory(t *testing.T) {
+	t.Parallel()
+
+	press := func(m AppModel, key tea.KeyMsg) AppModel {
+		updated, _ := m.Update(key)
+		return updated.(AppModel)
+	}
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	t.Run("esc walks back through pages, then leaves the page view", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a", "b", "c")
+		require.Equal(t, "c", shownPage(m))
+
+		m = press(m, esc)
+		assert.Equal(t, "b", shownPage(m))
+		m = press(m, esc)
+		assert.Equal(t, "a", shownPage(m))
+		m = press(m, esc)
+		assert.Equal(t, PageDashboard, m.currentPage, "one more esc leaves the page view")
+	})
+
+	t.Run("brackets go back and forward", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a", "b", "c")
+
+		m = press(m, runeKey('['))
+		m = press(m, runeKey('['))
+		assert.Equal(t, "a", shownPage(m))
+		m = press(m, runeKey(']'))
+		assert.Equal(t, "b", shownPage(m))
+		m = press(m, runeKey(']'))
+		assert.Equal(t, "c", shownPage(m))
+		m = press(m, runeKey(']'))
+		assert.Equal(t, "c", shownPage(m), "nothing further forward")
+	})
+
+	t.Run("opening a page after going back drops the forward pages", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a", "b")
+		m = press(m, runeKey('['))
+		m = openPages(t, m, "x")
+
+		m = press(m, runeKey(']'))
+		assert.Equal(t, "x", shownPage(m))
+		m = press(m, runeKey('['))
+		assert.Equal(t, "a", shownPage(m))
+	})
+
+	t.Run("opening the page already shown changes nothing", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a")
+
+		updated, cmd := m.Update(pages.OpenLinkMsg{ID: "a"})
+		m = updated.(AppModel)
+
+		assert.Nil(t, cmd)
+		assert.Empty(t, m.backTrail)
+	})
+
+	t.Run("entering the page view again starts a fresh history", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a", "b")
+		m = press(m, esc)
+		m = press(m, esc)
+		require.Equal(t, PageDashboard, m.currentPage)
+
+		m = openPages(t, m, "z")
+		m = press(m, esc)
+
+		assert.Equal(t, PageDashboard, m.currentPage)
+	})
+}
+
+func TestModel_FollowingADatabaseLinkShowsItsRows(t *testing.T) {
+	t.Parallel()
+
+	m := openPages(t, newActionTestModel(t), "a")
+
+	updated, cmd := m.Update(pages.OpenLinkMsg{ID: "db-9", Database: true})
+	m = updated.(AppModel)
+
+	assert.Equal(t, PageList, m.currentPage)
+	assert.Equal(t, "db-9", m.currentDBID)
+	assert.NotNil(t, cmd)
+}
+
+func TestModel_ArchivedPageIsLeft(t *testing.T) {
+	t.Parallel()
+
+	t.Run("back to the page read before", func(t *testing.T) {
+		t.Parallel()
+		m := openPages(t, newActionTestModel(t), "a", "b")
+
+		updated, cmd := m.Update(pages.PageArchivedMsg{ID: "b"})
+		m = updated.(AppModel)
+
+		assert.Equal(t, "a", shownPage(m))
+		assert.Empty(t, m.forwardTrail, "an archived page must not be reachable with ]")
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("back to the rows it was opened from", func(t *testing.T) {
+		t.Parallel()
+		m := listModel(t)
+		updated, _ := m.Update(pages.NewNavigationMsg("row-1"))
+		m = updated.(AppModel)
+
+		updated, cmd := m.Update(pages.PageArchivedMsg{ID: "row-1"})
+		m = updated.(AppModel)
+
+		assert.Equal(t, PageList, m.currentPage)
+		assert.Nil(t, m.pages[PageDetail])
+		assert.NotNil(t, cmd, "rows and tree reload")
+	})
+}
