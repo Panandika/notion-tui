@@ -59,6 +59,10 @@ type AppModel struct {
 	// esc and "[" walk back through them, "]" forward again.
 	backTrail    []string
 	forwardTrail []string
+	// parked holds the page view as it was each time the user left it for
+	// another screen, newest last, so coming back shows the same page even
+	// if other pages were read in between.
+	parked []parkedPage
 }
 
 // NewModelInput contains the parameters for creating a new AppModel.
@@ -256,14 +260,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Database {
-			return m, m.switchDatabase(msg.ID)
+			return m, m.openLinkedDatabase(msg.ID)
 		}
 		return m, m.navigateToDetail(msg.ID)
 
 	case pages.PageArchivedMsg:
-		// The page is gone: leave it, and reload what listed it
+		// The page is gone: forget it, leave it if it is the one on screen,
+		// and reload what listed it
 		m.statusBar.SetHelpText("Page archived")
-		return m, tea.Batch(m.leaveArchivedPage(), m.fetchWorkspaceTreeCmd())
+		m.backTrail = withoutID(m.backTrail, msg.ID)
+		m.forwardTrail = withoutID(m.forwardTrail, msg.ID)
+		for i := range m.parked {
+			m.parked[i].backTrail = withoutID(m.parked[i].backTrail, msg.ID)
+			m.parked[i].forwardTrail = withoutID(m.parked[i].forwardTrail, msg.ID)
+		}
+		cmds := []tea.Cmd{m.fetchWorkspaceTreeCmd()}
+		if current, ok := m.openPageID(); ok && current == msg.ID {
+			cmds = append(cmds, m.leaveArchivedPage())
+		}
+		return m, tea.Batch(cmds...)
 
 	case pages.ListResultMsg:
 		// Rows loaded or created by the list page go to the list page,
@@ -402,12 +417,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			// Handle back navigation for other pages
-			if m.navigator.CanGoBack() {
-				previousPage, ok := m.navigator.Back()
-				if ok {
-					m.currentPage = previousPage
-					return m, m.onReturnTo(previousPage)
-				}
+			if cmd, ok := m.back(); ok {
+				return m, cmd
 			}
 		}
 
@@ -471,12 +482,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Handle back navigation request from search page
-		if m.navigator.CanGoBack() {
-			previousPage, ok := m.navigator.Back()
-			if ok {
-				m.currentPage = previousPage
-				return m, m.onReturnTo(previousPage)
-			}
+		if cmd, ok := m.back(); ok {
+			return m, cmd
 		}
 	}
 
@@ -674,6 +681,7 @@ func (m *AppModel) handleGlobalKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 // Creates the page if it doesn't exist yet.
 func (m *AppModel) navigateTo(pageID PageID) tea.Cmd {
 	// Record navigation
+	m.parkOpenPage()
 	m.navigator.NavigateTo(pageID)
 	m.currentPage = pageID
 
@@ -781,13 +789,72 @@ func (m *AppModel) leaveArchivedPage() tea.Cmd {
 		return m.showPage(previous)
 	}
 	delete(m.pages, PageDetail)
+	if cmd, ok := m.back(); ok {
+		return cmd
+	}
+	m.resetTo(PageDashboard)
+	return nil
+}
+
+// parkedPage is the page view at the moment the user left it.
+type parkedPage struct {
+	pageID       string
+	backTrail    []string
+	forwardTrail []string
+}
+
+// parkOpenPage remembers the page view before another screen is put in
+// front of it. It does nothing when the page view is not on screen.
+func (m *AppModel) parkOpenPage() {
+	current, ok := m.openPageID()
+	if !ok {
+		return
+	}
+	m.parked = append(m.parked, parkedPage{
+		pageID:       current,
+		backTrail:    append([]string(nil), m.backTrail...),
+		forwardTrail: append([]string(nil), m.forwardTrail...),
+	})
+}
+
+// back returns to the screen before this one. Coming back to the page view
+// restores the page that was open when it was left. ok is false when there
+// is nowhere to go back to.
+func (m *AppModel) back() (tea.Cmd, bool) {
 	previousPage, ok := m.navigator.Back()
 	if !ok {
-		previousPage = PageDashboard
-		m.navigator.Reset(PageDashboard)
+		return nil, false
 	}
 	m.currentPage = previousPage
-	return m.onReturnTo(previousPage)
+	if previousPage != PageDetail || len(m.parked) == 0 {
+		return m.onReturnTo(previousPage), true
+	}
+
+	last := m.parked[len(m.parked)-1]
+	m.parked = m.parked[:len(m.parked)-1]
+	m.backTrail, m.forwardTrail = last.backTrail, last.forwardTrail
+	if shown, _ := m.openPageID(); shown == last.pageID {
+		return nil, true
+	}
+	return m.showPage(last.pageID), true
+}
+
+// resetTo makes a screen the only one in the history.
+func (m *AppModel) resetTo(pageID PageID) {
+	m.navigator.Reset(pageID)
+	m.currentPage = pageID
+	m.parked = nil
+}
+
+// withoutID returns the IDs with every occurrence of one removed.
+func withoutID(ids []string, remove string) []string {
+	kept := ids[:0]
+	for _, id := range ids {
+		if id != remove {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }
 
 // goBack navigates to the previous page in history.
@@ -1036,6 +1103,26 @@ func (m *AppModel) refreshCurrentPage() tea.Cmd {
 
 // switchDatabase switches to a different database and refreshes the list page.
 func (m *AppModel) switchDatabase(databaseID string) tea.Cmd {
+	cmd := m.installListPage(databaseID)
+	m.resetTo(PageList)
+	return cmd
+}
+
+// openLinkedDatabase shows a database reached by following a link in a page.
+// Unlike switchDatabase it keeps the way back: esc returns to the page.
+func (m *AppModel) openLinkedDatabase(databaseID string) tea.Cmd {
+	if m.currentPage != PageDetail {
+		return m.switchDatabase(databaseID)
+	}
+	m.parkOpenPage()
+	cmd := m.installListPage(databaseID)
+	m.navigator.NavigateTo(PageList)
+	m.currentPage = PageList
+	return cmd
+}
+
+// installListPage points the list page at a database and starts loading it.
+func (m *AppModel) installListPage(databaseID string) tea.Cmd {
 	m.currentDBID = databaseID
 
 	// Recreate list page with new database
@@ -1047,10 +1134,5 @@ func (m *AppModel) switchDatabase(databaseID string) tea.Cmd {
 		DatabaseID:   databaseID,
 	})
 	m.pages[PageList] = &listPage
-
-	// Navigate back to list page
-	m.navigator.Reset(PageList)
-	m.currentPage = PageList
-
 	return listPage.Init()
 }

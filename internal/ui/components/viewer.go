@@ -53,7 +53,8 @@ type PageViewer struct {
 	pageID   string
 	ready    bool
 
-	matches    []int // Lines of the content that contain the search text
+	query      string // Search text, lower case
+	matches    []int  // Lines of the content that contain the search text
 	matchIndex int
 	loading    bool
 	err        error
@@ -148,8 +149,13 @@ func (pv *PageViewer) Update(msg tea.Msg) (ViewerInterface, tea.Cmd) {
 		}
 
 		pv.content = msg.Content()
-		pv.matches = nil // Line numbers of old content mean nothing now
 		pv.viewport.SetContent(msg.Content())
+		// Line numbers of the old content mean nothing now: look again, so
+		// next/previous keep working after a resize or a refresh.
+		pv.matches = pv.matchingLines()
+		if pv.matchIndex >= len(pv.matches) {
+			pv.matchIndex = 0
+		}
 		pv.ready = true
 		pv.loading = false
 		return pv, nil
@@ -274,20 +280,26 @@ func renderMarkdown(markdown string, viewerWidth int) tea.Msg {
 // Find looks for text in the content, ignoring case and colours, and jumps
 // to the first matching line.
 func (pv *PageViewer) Find(query string) int {
-	pv.matches, pv.matchIndex = nil, 0
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return 0
-	}
-	for index, line := range strings.Split(pv.content, "\n") {
-		if strings.Contains(strings.ToLower(ansi.Strip(line)), query) {
-			pv.matches = append(pv.matches, index)
-		}
-	}
+	pv.query = strings.ToLower(strings.TrimSpace(query))
+	pv.matches, pv.matchIndex = pv.matchingLines(), 0
 	if len(pv.matches) > 0 {
 		pv.viewport.SetYOffset(pv.matches[0])
 	}
 	return len(pv.matches)
+}
+
+// matchingLines lists the lines of the content that hold the search text.
+func (pv *PageViewer) matchingLines() []int {
+	if pv.query == "" {
+		return nil
+	}
+	var lines []int
+	for index, line := range strings.Split(pv.content, "\n") {
+		if strings.Contains(strings.ToLower(ansi.Strip(line)), pv.query) {
+			lines = append(lines, index)
+		}
+	}
+	return lines
 }
 
 // FindNext jumps to the next or previous match, wrapping around.

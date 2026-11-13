@@ -566,12 +566,6 @@ func shownPage(m AppModel) string {
 func TestModel_PageHistory(t *testing.T) {
 	t.Parallel()
 
-	press := func(m AppModel, key tea.KeyMsg) AppModel {
-		updated, _ := m.Update(key)
-		return updated.(AppModel)
-	}
-	esc := tea.KeyMsg{Type: tea.KeyEsc}
-
 	t.Run("esc walks back through pages, then leaves the page view", func(t *testing.T) {
 		t.Parallel()
 		m := openPages(t, newActionTestModel(t), "a", "b", "c")
@@ -678,4 +672,64 @@ func TestModel_ArchivedPageIsLeft(t *testing.T) {
 		assert.Nil(t, m.pages[PageDetail])
 		assert.NotNil(t, cmd, "rows and tree reload")
 	})
+}
+
+func TestModel_EscAfterADatabaseLinkReturnsToThePage(t *testing.T) {
+	t.Parallel()
+
+	m := openPages(t, newActionTestModel(t), "a", "b")
+	updated, _ := m.Update(pages.OpenLinkMsg{ID: "db-9", Database: true})
+	m = updated.(AppModel)
+	require.Equal(t, PageList, m.currentPage)
+
+	m = press(m, esc)
+
+	assert.Equal(t, "b", shownPage(m), "the page the link was on")
+	m = press(m, esc)
+	assert.Equal(t, "a", shownPage(m), "and the pages read before it")
+}
+
+func TestModel_ArchiveResultForAnotherPageLeavesTheScreenAlone(t *testing.T) {
+	t.Parallel()
+
+	m := openPages(t, newActionTestModel(t), "a", "b", "c")
+	m = press(m, runeKey('['))
+	require.Equal(t, "b", shownPage(m))
+
+	updated, _ := m.Update(pages.PageArchivedMsg{ID: "c"})
+	m = updated.(AppModel)
+	assert.Equal(t, "b", shownPage(m), "still on the page being read")
+	assert.Empty(t, m.forwardTrail, "the archived page cannot be reached with ]")
+
+	updated, _ = m.Update(pages.PageArchivedMsg{ID: "a"})
+	m = updated.(AppModel)
+	assert.Equal(t, "b", shownPage(m))
+	assert.Empty(t, m.backTrail, "nor with [")
+}
+
+var esc = tea.KeyMsg{Type: tea.KeyEsc}
+
+// press sends one key to the app.
+func press(m AppModel, key tea.KeyMsg) AppModel {
+	updated, _ := m.Update(key)
+	return updated.(AppModel)
+}
+
+func TestModel_ReturningToThePageViewShowsThePageThatWasLeft(t *testing.T) {
+	t.Parallel()
+
+	m := openPages(t, newActionTestModel(t), "a", "b")
+	updated, _ := m.Update(pages.OpenLinkMsg{ID: "db-9", Database: true})
+	m = updated.(AppModel)
+	updated, _ = m.Update(pages.NewNavigationMsg("row-1"))
+	m = updated.(AppModel)
+	require.Equal(t, "row-1", shownPage(m), "a row of the linked database")
+
+	m = press(m, esc)
+	require.Equal(t, PageList, m.currentPage)
+	m = press(m, esc)
+
+	assert.Equal(t, "b", shownPage(m), "not the row read in between")
+	m = press(m, runeKey('['))
+	assert.Equal(t, "a", shownPage(m), "with its history intact")
 }

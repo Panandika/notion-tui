@@ -65,3 +65,60 @@ func TestNotionID(t *testing.T) {
 		})
 	}
 }
+
+func TestPageLinks_UnclosedBlockDoesNotSwallowWhatFollows(t *testing.T) {
+	t.Parallel()
+
+	markdown := "<page url=\"https://app.notion.com/p/" + idA + "\">\n" +
+		"\n" +
+		"First\n" +
+		"A [web link](https://example.test/a) after it.\n" +
+		"<database url=\"https://app.notion.com/p/" + idB + "\">\n" +
+		"<page url=\"https://app.notion.com/p/" + idC + "\">\n"
+
+	assert.Equal(t, []PageLink{
+		{Kind: LinkPage, Title: "First", URL: "https://app.notion.com/p/" + idA, ID: idA},
+		{Kind: LinkWeb, Title: "web link", URL: "https://example.test/a"},
+		{Kind: LinkDatabase, Title: "https://app.notion.com/p/" + idB, URL: "https://app.notion.com/p/" + idB, ID: idB},
+		{Kind: LinkPage, Title: "https://app.notion.com/p/" + idC, URL: "https://app.notion.com/p/" + idC, ID: idC},
+	}, PageLinks(markdown), "a tag takes one line as its title; one left open at the end still counts")
+}
+
+func TestPageLinks_BlockWithoutNotionIDIsNotAPage(t *testing.T) {
+	t.Parallel()
+
+	links := PageLinks("<page url=\"https://evil.test/x\">Trap</page>\n<page url=\"javascript:alert(1)\">Worse</page>")
+
+	assert.Equal(t, []PageLink{
+		{Kind: LinkWeb, Title: "Trap", URL: "https://evil.test/x"},
+	}, links, "no ID means nothing to open in the app")
+}
+
+func TestPageLinks_SelfClosingMention(t *testing.T) {
+	t.Parallel()
+
+	markdown := "See <mention-page url=\"https://app.notion.com/p/" + idA + "\"/> and " +
+		"<mention-page url=\"https://app.notion.com/p/" + idB + "\">Second</mention-page>."
+
+	assert.Equal(t, []PageLink{
+		{Kind: LinkPage, Title: "https://app.notion.com/p/" + idA, URL: "https://app.notion.com/p/" + idA, ID: idA},
+		{Kind: LinkPage, Title: "Second", URL: "https://app.notion.com/p/" + idB, ID: idB},
+	}, PageLinks(markdown))
+}
+
+func TestPageLinks_URLWithParentheses(t *testing.T) {
+	t.Parallel()
+
+	links := PageLinks("Read [Go](https://en.wikipedia.org/wiki/Go_(programming_language)) (really).")
+
+	assert.Equal(t, []PageLink{
+		{Kind: LinkWeb, Title: "Go", URL: "https://en.wikipedia.org/wiki/Go_(programming_language)"},
+	}, links)
+}
+
+func TestNotionID_PeekLinkIsTheRow(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, idB, notionID("https://www.notion.so/ws/"+idA+"?v=1&p="+idB+"&pm=s"))
+	assert.Equal(t, idA, notionID("https://www.notion.so/ws/"+idA+"?p=not-an-id"))
+}

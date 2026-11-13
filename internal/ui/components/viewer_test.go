@@ -647,3 +647,19 @@ func TestPageViewer_Find(t *testing.T) {
 	assert.Equal(t, 0, total)
 	assert.Equal(t, 0, viewer.Find("   "))
 }
+
+func TestPageViewer_FindSurvivesNewContent(t *testing.T) {
+	t.Parallel()
+
+	viewer := NewPageViewer(NewPageViewerInput{Width: 60, Height: 14})
+	viewer.SetContent("alpha\nbudget one\nbeta\nbudget two")
+	require.Equal(t, 2, viewer.Find("budget"))
+	viewer.FindNext(1)
+
+	// The page is drawn again (resize, refresh) with the lines moved
+	viewer.Update(ContentLoadedMsg{content: "budget two\nalpha"})
+
+	position, total := viewer.FindNext(1)
+	assert.Equal(t, 1, total, "matches are looked up in the new content")
+	assert.Equal(t, 1, position)
+}

@@ -25,10 +25,13 @@ type PageLink struct {
 }
 
 var (
-	blockLinkOpen   = regexp.MustCompile(`^<(page|database)(\s[^>]*)?>(.*)$`)
-	mentionLink     = regexp.MustCompile(`<(mention[\w-]*)(\s[^>]*)?>(.*?)</mention[\w-]*>`)
-	markdownURLLink = regexp.MustCompile(`(!?)\[([^\]]*)\]\(([^)\s]+)\)`)
+	blockLinkOpen = regexp.MustCompile(`^<(page|database)(\s[^>]*)?>(.*)$`)
+	// A mention is either self-closing or wraps its title
+	mentionLink = regexp.MustCompile(`<(mention[\w-]*)(\s[^>]*?)?(?:/>|>(.*?)</mention[\w-]*>)`)
+	// The URL may hold one level of parentheses, as Wikipedia links do
+	markdownURLLink = regexp.MustCompile(`(!?)\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)`)
 	notionIDPattern = regexp.MustCompile(`([0-9a-fA-F]{32})$`)
+	bareIDPattern   = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 	codeFenceOpen   = regexp.MustCompile("^\\s*(`{3,}|~{3,})(.*)$")
 )
 
@@ -71,28 +74,36 @@ func PageLinks(markdown string) []PageLink {
 		}
 
 		if pending != nil {
+			// The title is the next line with text on it, and nothing more:
+			// a tag that is never closed must not swallow the rest of the page.
+			if line == "" {
+				continue
+			}
+			link := *pending
+			pending = nil
 			switch {
 			case strings.HasPrefix(line, "</"):
-				add(*pending)
-				pending = nil
-			case line != "" && pending.Title == "":
-				pending.Title = inlineMarkdown(line)
+				add(link)
+				continue
+			case !blockLinkOpen.MatchString(line):
+				title, _, _ := strings.Cut(line, "</")
+				link.Title = inlineMarkdown(title)
+				add(link)
+				continue
 			}
-			continue
+			add(link) // Another tag opens: this one had no title
 		}
 
 		if m := blockLinkOpen.FindStringSubmatch(line); m != nil {
-			link := PageLink{Kind: LinkPage, URL: attr(m[2], "url")}
-			if m[1] == "database" {
-				link.Kind = LinkDatabase
-			}
-			link.ID = notionID(link.URL)
+			link := blockLink(m[1], attr(m[2], "url"))
 			rest := m[3]
 			if end := strings.Index(rest, "</"); end >= 0 {
 				link.Title = inlineMarkdown(rest[:end])
 				add(link)
+			} else if title := inlineMarkdown(rest); strings.TrimSpace(title) != "" {
+				link.Title = title
+				add(link)
 			} else {
-				link.Title = inlineMarkdown(rest)
 				pending = &link
 			}
 			continue
@@ -116,7 +127,25 @@ func PageLinks(markdown string) []PageLink {
 			add(link)
 		}
 	}
+	if pending != nil {
+		add(*pending)
+	}
 	return links
+}
+
+// blockLink describes a <page> or <database> tag. A tag whose URL holds no
+// Notion ID cannot be opened in the app, so it is treated as a web link, or
+// dropped if it is not one either.
+func blockLink(tag, target string) PageLink {
+	id := notionID(target)
+	if id == "" {
+		return classifyURL(target)
+	}
+	link := PageLink{Kind: LinkPage, URL: target, ID: id}
+	if tag == "database" {
+		link.Kind = LinkDatabase
+	}
+	return link
 }
 
 // classifyURL decides whether a URL leads to a Notion page or elsewhere.
@@ -147,11 +176,16 @@ func isNotionHost(host string) bool {
 }
 
 // notionID extracts the 32-character ID that ends the path of a Notion URL
-// ("https://app.notion.com/p/<id>", "https://www.notion.so/Title-<id>").
+// ("https://app.notion.com/p/<id>", "https://www.notion.so/Title-<id>"). A
+// row opened in a side peek ("...?p=<row id>") is the row, not the view
+// behind it.
 func notionID(target string) string {
 	parsed, err := url.Parse(target)
 	if err != nil || !isNotionHost(parsed.Host) {
 		return ""
+	}
+	if peek := parsed.Query().Get("p"); bareIDPattern.MatchString(peek) {
+		return strings.ToLower(peek)
 	}
 	path := strings.TrimRight(parsed.Path, "/")
 	if m := notionIDPattern.FindStringSubmatch(path); m != nil {
