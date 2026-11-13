@@ -32,7 +32,7 @@ A tape fails if an expected screen does not appear in time (`Wait+Screen` lines)
 
 ### With Docker
 
-No local VHS install needed. Build a Linux binary first, since the tape runs inside the container:
+No local VHS install needed. Build a Linux binary first, since the tape runs inside the container. Its architecture must match the image Docker pulls (arm64 on Apple Silicon, amd64 on most other machines); `GOOS=linux go build` on the same machine gets that right:
 
 ```bash
 GOOS=linux go build -o notion-tui .

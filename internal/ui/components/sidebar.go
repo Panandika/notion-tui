@@ -108,7 +108,9 @@ func NewSidebar(input NewSidebarInput) Sidebar {
 	}
 	l.SetFilteringEnabled(true)
 	l.SetShowStatusBar(true)
-	l.SetShowHelp(true)
+	// No built-in help line: it advertises "? more", but "?" opens the app's
+	// key reference. The page's status bar lists the keys instead.
+	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 
 	styles := DefaultSidebarStyles()

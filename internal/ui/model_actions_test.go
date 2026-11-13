@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
@@ -350,4 +351,54 @@ func TestModel_RefreshCommand(t *testing.T) {
 
 		assert.Nil(t, m.handleCommandExecution(components.CommandExecutedMsg{ActionType: "refresh"}))
 	})
+}
+
+// listModel returns a model showing a database's rows.
+func listModel(t *testing.T) AppModel {
+	t.Helper()
+	m := newActionTestModel(t)
+	updated, _ := m.Update(pages.DatabaseSelectedMsg{DatabaseID: "db"})
+	m = updated.(AppModel)
+	require.Equal(t, PageList, m.currentPage)
+	list := m.pages[PageList].(*pages.ListPage)
+	list.SetPages([]pages.Page{pages.NewPage("row-1", "Quarterly report", "", time.Now())})
+	return m
+}
+
+func TestModel_RowFilterTypingIsNotGlobalShortcuts(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	updated, _ := m.Update(runeKey('/'))
+	m = updated.(AppModel)
+	list := m.pages[PageList].(*pages.ListPage)
+	require.True(t, list.CapturesInput())
+
+	for _, key := range []tea.KeyMsg{runeKey('q'), runeKey('?'), {Type: tea.KeyTab}} {
+		updated, cmd := m.Update(key)
+		m = updated.(AppModel)
+		assert.False(t, isQuit(cmd), "%q must be filter text", key.String())
+	}
+
+	assert.Equal(t, PageList, m.currentPage)
+	assert.False(t, m.showHelp)
+	assert.False(t, m.sidebarFocus)
+}
+
+func TestModel_EscWithTreeFocusedDoesNotReachTheList(t *testing.T) {
+	t.Parallel()
+
+	m := listModel(t)
+	// Apply a filter, then move focus to the tree
+	for _, key := range []tea.KeyMsg{runeKey('/'), runeKey('Q'), {Type: tea.KeyEnter}, {Type: tea.KeyTab}} {
+		updated, _ := m.Update(key)
+		m = updated.(AppModel)
+	}
+	require.True(t, m.sidebarFocus)
+	view := m.pages[PageList].(*pages.ListPage).View()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(AppModel)
+
+	assert.Equal(t, view, m.pages[PageList].(*pages.ListPage).View(), "esc in the tree must not change the row list")
 }

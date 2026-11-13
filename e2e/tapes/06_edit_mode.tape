@@ -16,6 +16,8 @@ Set Theme "Dracula"
 Set TypingSpeed 60ms
 
 # The editor is taken from the environment. This tape drives vim.
+# VISUAL takes precedence over EDITOR, so both are set.
+Env VISUAL "vim"
 Env EDITOR "vim"
 
 Type "./notion-tui" Enter

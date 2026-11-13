@@ -266,8 +266,15 @@ func (lp *ListPage) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render("This database has no pages"), status)
 	}
 
-	// The database's rows: move with j/k, open with enter, filter with /
-	return lipgloss.JoinVertical(lipgloss.Left, lp.sidebar.View(), status)
+	// The database's rows: move with j/k, open with enter, filter with /.
+	// The list has a minimum size of its own (title, counters, help), so it
+	// is cut to the page: on a small terminal an oversized view would push
+	// the top of the screen out of sight.
+	rows := lipgloss.NewStyle().
+		MaxWidth(lp.width).
+		MaxHeight(lp.height - 1).
+		Render(lp.sidebar.View())
+	return lipgloss.JoinVertical(lipgloss.Left, rows, status)
 }
 
 // listChrome is the number of rows around the row list: the page status bar
@@ -515,7 +522,7 @@ func (lp *ListPage) updateStatusBarFromSidebar() {
 		lp.statusBar.SetHelpText(helpText)
 	} else if !lp.loading && !lp.loadingMore {
 		// Restore normal help text
-		helpText := fmt.Sprintf("%d pages | /: search | r: refresh", len(lp.pageList))
+		helpText := fmt.Sprintf("%d pages | enter: open | /: filter | r: refresh", len(lp.pageList))
 		if lp.hasMore {
 			helpText += " | m: load more"
 		}

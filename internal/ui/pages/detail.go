@@ -77,7 +77,7 @@ type editSavedMsg struct {
 
 // errPageChanged means the page was modified in Notion while it was open in
 // the editor, so replacing its whole content would discard that change.
-var errPageChanged = errors.New("the page changed in Notion while you were editing; press r to reload it, then edit again")
+var errPageChanged = errors.New("the page changed in Notion while you were editing; edit again from the current version and copy your changes over")
 
 // pageCreatedResultMsg is the result of creating a new page.
 type pageCreatedResultMsg struct {

@@ -19,7 +19,8 @@ Type "./notion-tui" Enter
 Wait+Screen@30s /Welcome to Notion TUI/
 Sleep 1s
 
-# Focus the sidebar tree and move around
+# Give the workspace tree time to load, then focus it and move around
+Sleep 3s
 Tab
 Sleep 500ms
 Down 3
@@ -27,18 +28,18 @@ Sleep 500ms
 Up 3
 Sleep 500ms
 
-# Open the first item (a page opens in the viewer, a database lists its rows)
+# Enter on the first item: a page opens in the viewer, a database lists its
+# rows, an item with children expands
 Enter
 Sleep 5s
 
-# Hide and show the sidebar
+# Hide and show the sidebar (hiding it also moves focus back to the page)
 Ctrl+B
 Sleep 1500ms
 Ctrl+B
 Sleep 1s
 
-# Back to the dashboard: focus the page, then go back
-Tab
+# Go back, if there is somewhere to go back to
 Escape
 Sleep 1s
 
