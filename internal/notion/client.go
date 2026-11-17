@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jomei/notionapi"
@@ -49,6 +50,10 @@ type Client struct {
 
 	// readOnly makes every call that would change Notion fail.
 	readOnly bool
+
+	// Names of people who wrote comments, by user ID
+	userMu    sync.Mutex
+	userNames map[string]string
 }
 
 // ErrReadOnly is returned by every changing call of a read-only client.

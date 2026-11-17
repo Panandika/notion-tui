@@ -108,6 +108,7 @@ Press `?` in the app for the full key reference.
 | `p` | Change properties (database rows) |
 | `t` | Check or uncheck to-dos |
 | `o` | Follow a link: child page, database, mention or web link |
+| `c` | Comments: read the page's open comments, add one (`a`) or reply (`r`) |
 | `[` / `]` | Back / forward through the pages you read (`Esc` also goes back) |
 | `/`, `n`, `N` | Find in page, next match, previous match |
 | `D` | Archive the page (asks first; restorable from Notion's trash) |
@@ -166,6 +167,12 @@ Other property types (people, relations, formulas, multi-select and so on) are s
 
 Press `t` on any page to list its to-dos and check or uncheck them with Space. Each change is sent on its own, without opening the editor.
 
+## Comments
+
+`c` on a page lists its open comments, replies under the comment they answer, with the selected one shown in full. `a` writes a new comment on the page and `r` replies in the selected comment's thread; both ask for one line of text.
+
+Notion's API only gives open (unresolved) comments on the page itself: resolved comments and comments attached to a piece of text inside the page are not listed, and comments cannot be edited or resolved from here. The connection needs the "Read comments" and "Insert comments" capabilities.
+
 ## Creating pages
 
 `Ctrl+N` (or **New Page** in the palette) opens your editor with a template. The first `# heading` becomes the title. The page is created inside the page you are viewing. Leaving the template unchanged cancels.
@@ -210,7 +217,7 @@ export NOTION_TUI_CACHE_DIR="~/.cache/notion-tui"
 
 ### Read-only mode
 
-`--readonly` (or `readonly: true`, or `NOTION_TUI_READONLY=true`) turns off everything that changes Notion: editing, properties, to-dos, new pages and rows, archiving and `notion-tui add`. The keys answer with a notice, and the Notion client itself refuses to send a change, so nothing can slip through. Browsing, search, following links and exporting work as usual.
+`--readonly` (or `readonly: true`, or `NOTION_TUI_READONLY=true`) turns off everything that changes Notion: editing, properties, to-dos, new pages and rows, comments, archiving and `notion-tui add`. The keys answer with a notice, and the Notion client itself refuses to send a change, so nothing can slip through. Browsing, search, following links and exporting work as usual.
 
 ### Theme
 
@@ -229,7 +236,7 @@ keys:
 
 A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab` or `shift+tab`; put punctuation in quotes (`back: "<"`). Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, `ctrl+u`, `ctrl+d`, `ctrl+t`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
 
-Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_property_filter`, `row_clear_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
+Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `comments`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_property_filter`, `row_clear_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
 
 ### Multiple databases
 
@@ -447,7 +454,6 @@ Special thanks to:
 
 Planned next, roughly in order:
 
-- Comments: read a page's open comments, add one
 - Offline reading from the cache
 - Saved database views
 
