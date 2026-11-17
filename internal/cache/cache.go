@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -111,6 +112,10 @@ func (c *PageCache) Load(ctx context.Context, key string, out any) (age time.Dur
 	}
 
 	c.stats.HitCount++
+	// Mark the entry as used, so Prune keeps copies that are still read
+	// (offline, for instance) even if they are no longer rewritten
+	now := time.Now()
+	_ = os.Chtimes(cachePath, now, now)
 	return time.Since(entry.Timestamp), !c.IsExpired(&entry), nil
 }
 
@@ -153,7 +158,7 @@ func (c *PageCache) Set(ctx context.Context, input SetInput) error {
 
 	cachePath := makeCachePath(c.cacheDir, input.PageID)
 
-	if err := os.WriteFile(cachePath, entryBytes, 0600); err != nil {
+	if err := writeFileAtomic(cachePath, entryBytes); err != nil {
 		return fmt.Errorf("write cache file %s: %w", cachePath, err)
 	}
 
@@ -212,6 +217,86 @@ func (c *PageCache) Clear() error {
 	c.stats.Size = 0
 
 	return nil
+}
+
+// writeFileAtomic writes a file under a temporary name and renames it into
+// place, so a reader (or a crash) never sees half an entry.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), tempPrefix+"*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_, err = tmp.Write(data)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmpName, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmpName)
+	}
+	return err
+}
+
+// tempPrefix starts the name of a file that is still being written.
+const tempPrefix = ".notion-tui-tmp-"
+
+// Prune deletes entries that were last written or read more than maxAge
+// ago, and temporary files left behind by a write that never finished. It
+// returns how many files it removed. The directory may hold other files
+// (the user chooses it), so a file is only removed when it is certainly
+// the cache's own: named as a temporary file of ours, or holding an entry
+// stored under exactly that file name.
+func (c *PageCache) Prune(maxAge time.Duration) (removed int, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entries, err := os.ReadDir(c.cacheDir)
+	if err != nil {
+		return 0, fmt.Errorf("read cache directory %s: %w", c.cacheDir, err)
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if !isCacheFile(c.cacheDir, entry.Name()) {
+			continue
+		}
+		if os.Remove(filepath.Join(c.cacheDir, entry.Name())) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// isCacheFile reports whether a file in the cache directory was written
+// by this cache.
+func isCacheFile(dir, name string) bool {
+	if strings.HasPrefix(name, tempPrefix) {
+		return true
+	}
+	if filepath.Ext(name) != ".json" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return false
+	}
+	var entry CacheEntry
+	if err := entry.Unmarshal(data); err != nil || entry.PageID == "" {
+		return false
+	}
+	return filepath.Base(makeCachePath(dir, entry.PageID)) == name
 }
 
 // Stats returns the current cache statistics.

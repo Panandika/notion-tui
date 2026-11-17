@@ -126,6 +126,10 @@ func (m *AppModel) statusMode() string {
 // modeReadOnly is shown in the status bar while changes are turned off.
 const modeReadOnly = "READ-ONLY"
 
+// cacheMaxAge is how long a saved copy is kept after it was last written
+// or read.
+const cacheMaxAge = 90 * 24 * time.Hour
+
 // NewModelInput contains the parameters for creating a new AppModel.
 type NewModelInput struct {
 	Config *config.Config
@@ -244,6 +248,11 @@ func (m *AppModel) fetchWorkspaceTreeCmd() tea.Cmd {
 		}
 		if m.cache != nil {
 			_ = m.cache.Set(ctx, cache.SetInput{PageID: treeCacheKey, Data: savedTree{Format: treeCacheFormat, Results: resp.Results}})
+			// Copies unused for a long time are of pages no longer
+			// visited; without this the directory only ever grows. Done
+			// here, once Notion has answered: without a connection the
+			// copies are all there is, however old.
+			_, _ = m.cache.Prune(cacheMaxAge)
 		}
 
 		// Build tree from results

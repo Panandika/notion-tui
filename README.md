@@ -20,9 +20,54 @@ Browse your workspace, read pages, edit them in your own editor, create pages an
 
 ## Installation
 
-### From Source
+### Download a release
+
+Prebuilt binaries for macOS, Linux and Windows are on the [Releases](https://github.com/Panandika/notion-tui/releases/latest) page. Pick the archive for your system:
+
+| System | Archive |
+|--------|---------|
+| macOS, Apple silicon | `notion-tui-<version>-darwin-arm64.tar.gz` |
+| macOS, Intel | `notion-tui-<version>-darwin-amd64.tar.gz` |
+| Linux, x86-64 | `notion-tui-<version>-linux-amd64.tar.gz` |
+| Linux, ARM 64-bit | `notion-tui-<version>-linux-arm64.tar.gz` |
+| Linux, ARM 32-bit | `notion-tui-<version>-linux-armv7.tar.gz` |
+| Windows, x86-64 | `notion-tui-<version>-windows-amd64.zip` |
+| Windows, ARM | `notion-tui-<version>-windows-arm64.zip` |
+
+On macOS or Linux, with the version and system you want:
+
+```bash
+VERSION=0.2.0
+TARGET=darwin-arm64
+BASE=https://github.com/Panandika/notion-tui/releases/download/v$VERSION
+
+curl -LO "$BASE/notion-tui-$VERSION-$TARGET.tar.gz"
+curl -LO "$BASE/notion-tui-$VERSION-checksums.txt"
+
+# Check the download
+# (on Linux: sha256sum --ignore-missing -c "notion-tui-$VERSION-checksums.txt")
+shasum -a 256 --ignore-missing -c "notion-tui-$VERSION-checksums.txt"
+# Unpack and install
+tar -xzf "notion-tui-$VERSION-$TARGET.tar.gz"
+sudo mv notion-tui /usr/local/bin/
+notion-tui --version
+```
+
+The binaries are not signed. If macOS refuses to run a copy downloaded with a browser, remove the quarantine mark: `xattr -d com.apple.quarantine notion-tui`.
+
+On Windows, unpack the zip and put `notion-tui.exe` in a folder on your `PATH`.
+
+### With Go
 
 Requires Go 1.25 or later.
+
+```bash
+go install github.com/Panandika/notion-tui@latest
+```
+
+A binary installed this way reports a development version, not the release number.
+
+### From source
 
 ```bash
 git clone https://github.com/Panandika/notion-tui.git
@@ -32,8 +77,6 @@ go build -o notion-tui .
 # Optional: move to PATH
 sudo mv notion-tui /usr/local/bin/  # Linux/macOS
 ```
-
-Prebuilt binaries will be attached to [Releases](https://github.com/Panandika/notion-tui/releases) once a version is tagged.
 
 ## Quick Start
 
@@ -244,7 +287,7 @@ List databases under `databases:` in the config file with a name and optional ic
 
 ### Cache
 
-Pages you open, the first rows of databases you list and the workspace tree are saved under `~/.cache/notion-tui` (`cache_dir` or `NOTION_TUI_CACHE_DIR` to change it; `cache_dir: off` or `cache_dir: ""` to save nothing). The files are readable only by you.
+Pages you open, the first rows of databases you list and the workspace tree are saved under `~/.cache/notion-tui` (`cache_dir` or `NOTION_TUI_CACHE_DIR` to change it; `cache_dir: off` or `cache_dir: ""` to save nothing). The files are readable only by you. A relative `cache_dir` in the config file starts from the config file's directory. Copies neither read nor rewritten for 90 days are deleted.
 
 Titles and properties are fetched every time a page is opened. Its content is taken from the saved copy for up to an hour, unless Notion reports the page was edited since the copy was saved; `r` reloads it in any case.
 

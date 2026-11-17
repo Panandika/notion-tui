@@ -82,7 +82,7 @@ func Load() (*Config, error) {
 	if viper.IsSet("cache_dir") && strings.TrimSpace(viper.GetString("cache_dir")) == "" {
 		cfg.CacheDir = CacheOff
 	}
-	cfg.CacheDir = resolveCacheDir(cfg.CacheDir, os.UserHomeDir)
+	cfg.CacheDir = absoluteCacheDir(resolveCacheDir(cfg.CacheDir, os.UserHomeDir), cacheDirBase())
 
 	// Migrate legacy single database config to new format
 	if err := cfg.migrateLegacyConfig(); err != nil {
@@ -95,6 +95,39 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// cacheDirBase is the directory a relative cache_dir starts from: the
+// config file's own directory when the setting comes from that file, so
+// the cache does not move with the directory the app is started in. A
+// relative NOTION_TUI_CACHE_DIR is typed in a shell and starts, as there,
+// from the working directory ("").
+func cacheDirBase() string {
+	file := viper.ConfigFileUsed()
+	if file == "" || !viper.InConfig("cache_dir") || os.Getenv("NOTION_TUI_CACHE_DIR") != "" {
+		return ""
+	}
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(abs)
+}
+
+// absoluteCacheDir makes a relative cache directory absolute, starting
+// from base, or from the working directory when base is "".
+func absoluteCacheDir(dir, base string) string {
+	if dir == "" || filepath.IsAbs(dir) {
+		return dir
+	}
+	if base != "" {
+		return filepath.Join(base, dir)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	return abs
 }
 
 // resolveCacheDir decides where pages are kept for faster opening and for
