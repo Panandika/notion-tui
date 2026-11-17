@@ -79,7 +79,7 @@ debug: false
 # A leading ~ stands for your home directory.
 # Set to "off" (or "") to keep nothing on disk (no offline reading then).
 # A relative path here starts from this file's directory.
-# Copies not rewritten for 90 days are deleted at startup.
+# Copies neither read nor rewritten for 90 days are deleted.
 # Also: NOTION_TUI_CACHE_DIR
 # cache_dir: "~/.cache/notion-tui"
 

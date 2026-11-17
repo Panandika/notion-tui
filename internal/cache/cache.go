@@ -112,6 +112,10 @@ func (c *PageCache) Load(ctx context.Context, key string, out any) (age time.Dur
 	}
 
 	c.stats.HitCount++
+	// Mark the entry as used, so Prune keeps copies that are still read
+	// (offline, for instance) even if they are no longer rewritten
+	now := time.Now()
+	_ = os.Chtimes(cachePath, now, now)
 	return time.Since(entry.Timestamp), !c.IsExpired(&entry), nil
 }
 
@@ -224,6 +228,9 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	tmpName := tmp.Name()
 	_, err = tmp.Write(data)
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
@@ -237,12 +244,14 @@ func writeFileAtomic(path string, data []byte) error {
 }
 
 // tempPrefix starts the name of a file that is still being written.
-const tempPrefix = ".tmp-"
+const tempPrefix = ".notion-tui-tmp-"
 
-// Prune deletes entries that were last written more than maxAge ago, and
-// temporary files left behind by a write that never finished. It returns
-// how many files it removed. Only the cache's own files are touched:
-// "<hex>.json" entries and its temporary files.
+// Prune deletes entries that were last written or read more than maxAge
+// ago, and temporary files left behind by a write that never finished. It
+// returns how many files it removed. The directory may hold other files
+// (the user chooses it), so a file is only removed when it is certainly
+// the cache's own: named as a temporary file of ours, or holding an entry
+// stored under exactly that file name.
 func (c *PageCache) Prune(maxAge time.Duration) (removed int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -253,11 +262,14 @@ func (c *PageCache) Prune(maxAge time.Duration) (removed int, err error) {
 	}
 	cutoff := time.Now().Add(-maxAge)
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !isCacheFile(entry.Name()) {
+		if !entry.Type().IsRegular() {
 			continue
 		}
 		info, statErr := entry.Info()
 		if statErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if !isCacheFile(c.cacheDir, entry.Name()) {
 			continue
 		}
 		if os.Remove(filepath.Join(c.cacheDir, entry.Name())) == nil {
@@ -267,17 +279,24 @@ func (c *PageCache) Prune(maxAge time.Duration) (removed int, err error) {
 	return removed, nil
 }
 
-// isCacheFile reports whether a file name is one this cache writes.
-func isCacheFile(name string) bool {
+// isCacheFile reports whether a file in the cache directory was written
+// by this cache.
+func isCacheFile(dir, name string) bool {
 	if strings.HasPrefix(name, tempPrefix) {
 		return true
 	}
-	stem, isJSON := strings.CutSuffix(name, ".json")
-	if !isJSON || stem == "" {
+	if filepath.Ext(name) != ".json" {
 		return false
 	}
-	_, err := hex.DecodeString(stem)
-	return err == nil
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return false
+	}
+	var entry CacheEntry
+	if err := entry.Unmarshal(data); err != nil || entry.PageID == "" {
+		return false
+	}
+	return filepath.Base(makeCachePath(dir, entry.PageID)) == name
 }
 
 // Stats returns the current cache statistics.

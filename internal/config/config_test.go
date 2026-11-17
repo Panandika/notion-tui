@@ -458,7 +458,8 @@ func TestLoad_RelativeCacheDir(t *testing.T) {
 
 	// Typed in a shell, a relative directory starts from where the shell is
 	t.Setenv("NOTION_TUI_CACHE_DIR", "from-env")
-	viper.Set("cache_dir", "from-env")
+	viper.SetEnvPrefix("NOTION_TUI")
+	require.NoError(t, viper.BindEnv("cache_dir"))
 	cfg, err = Load()
 	require.NoError(t, err)
 	workingDir, err := os.Getwd()

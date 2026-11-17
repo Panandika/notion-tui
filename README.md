@@ -44,10 +44,11 @@ BASE=https://github.com/Panandika/notion-tui/releases/download/v$VERSION
 curl -LO "$BASE/notion-tui-$VERSION-$TARGET.tar.gz"
 curl -LO "$BASE/notion-tui-$VERSION-checksums.txt"
 
-# Check the download, then unpack it
-shasum -a 256 --ignore-missing -c "notion-tui-$VERSION-checksums.txt"   # Linux: sha256sum
+# Check the download
+# (on Linux: sha256sum --ignore-missing -c "notion-tui-$VERSION-checksums.txt")
+shasum -a 256 --ignore-missing -c "notion-tui-$VERSION-checksums.txt"
+# Unpack and install
 tar -xzf "notion-tui-$VERSION-$TARGET.tar.gz"
-
 sudo mv notion-tui /usr/local/bin/
 notion-tui --version
 ```
@@ -64,7 +65,7 @@ Requires Go 1.25 or later.
 go install github.com/Panandika/notion-tui@latest
 ```
 
-A binary installed this way reports its version as `dev`.
+A binary installed this way reports a development version, not the release number.
 
 ### From source
 
@@ -286,7 +287,7 @@ List databases under `databases:` in the config file with a name and optional ic
 
 ### Cache
 
-Pages you open, the first rows of databases you list and the workspace tree are saved under `~/.cache/notion-tui` (`cache_dir` or `NOTION_TUI_CACHE_DIR` to change it; `cache_dir: off` or `cache_dir: ""` to save nothing). The files are readable only by you. A relative `cache_dir` in the config file starts from the config file's directory. Copies not rewritten for 90 days are deleted when the app starts.
+Pages you open, the first rows of databases you list and the workspace tree are saved under `~/.cache/notion-tui` (`cache_dir` or `NOTION_TUI_CACHE_DIR` to change it; `cache_dir: off` or `cache_dir: ""` to save nothing). The files are readable only by you. A relative `cache_dir` in the config file starts from the config file's directory. Copies neither read nor rewritten for 90 days are deleted.
 
 Titles and properties are fetched every time a page is opened. Its content is taken from the saved copy for up to an hour, unless Notion reports the page was edited since the copy was saved; `r` reloads it in any case.
 

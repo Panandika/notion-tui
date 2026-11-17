@@ -242,9 +242,24 @@ func TestDetailPage_PropertyChangeRefreshesTheSavedCopy(t *testing.T) {
 	assert.True(t, saved.LastEdited.Equal(loadedAt),
 		"the content was not loaded again, so the copy keeps its time and is refreshed at the next visit")
 
+	// A second change: the page object at hand is already newer than the
+	// content, which is still as it was loaded
+	again := testhelpers.NewTestPage("page-1", "Budget 2028")
+	again.LastEditedTime = loadedAt.Add(2 * time.Hour)
+	dp.handlePropertySaved(propertySavedMsg{pageID: "page-1", page: again})
+	saved, _, _, ok = dp.readCache(context.Background(), "page-1")
+	require.True(t, ok)
+	assert.True(t, saved.LastEdited.Equal(loadedAt), "still the time the content was loaded")
+
+	// The next visit loads the content again, as the page is newer
+	client.PageToReturn = again
+	contentLoads := len(client.GetPageMarkdownCalls)
+	open()
+	assert.Len(t, client.GetPageMarkdownCalls, contentLoads+1)
+
 	client.ErrorToReturn = errNoNetwork
 	offline, viewer := open()
 	assert.True(t, offline.Offline())
-	assert.Equal(t, "Budget 2027", offline.Title())
-	assert.Contains(t, viewer.markdown, "Budget 2027")
+	assert.Equal(t, "Budget 2028", offline.Title())
+	assert.Contains(t, viewer.markdown, "Budget 2028")
 }

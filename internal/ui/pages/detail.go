@@ -61,6 +61,8 @@ type pageLoadedMsg struct {
 	age     time.Duration
 	title   string
 	header  string
+	// contentAsOf is the page's last change that the content includes.
+	contentAsOf time.Time
 }
 
 // editSourceMsg carries the page's current Markdown, fetched right before
@@ -176,6 +178,10 @@ type DetailPage struct {
 	// Title and header of a saved copy, which has no page object
 	savedTitle  string
 	savedHeader string
+	// contentAsOf is the page's last change that the content on screen
+	// includes. Saving a property moves the page's own time forward
+	// without loading the content again, so the two can differ.
+	contentAsOf time.Time
 	keys        *keymap.Map
 
 	// Comments mode
@@ -296,6 +302,7 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		dp.err = nil
 		dp.offline = msg.offline
 		dp.savedTitle, dp.savedHeader = msg.title, msg.header
+		dp.contentAsOf = msg.contentAsOf
 		dp.statusBar.SetSyncStatus(components.StatusSynced)
 		dp.statusBar.SetMode(components.ModeBrowse)
 		if msg.offline {
@@ -869,7 +876,7 @@ func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 			case err == nil && page.LastEditedTime.After(cached.LastEdited):
 				return dp.fetchContent(ctx, pageID, page)
 			case err == nil:
-				return pageLoadedMsg{pageID: pageID, page: page, markdown: cached.Markdown, truncated: cached.Truncated}
+				return pageLoadedMsg{pageID: pageID, page: page, markdown: cached.Markdown, truncated: cached.Truncated, contentAsOf: cached.LastEdited}
 			case notion.IsOffline(err):
 				return offlineCopy(pageID, cached, age)
 			default:
@@ -965,6 +972,8 @@ func offlineCopy(pageID string, cached cachedPage, age time.Duration) pageLoaded
 		age:       age,
 		title:     cached.Title,
 		header:    cached.Header,
+
+		contentAsOf: cached.LastEdited,
 	}
 }
 
@@ -992,6 +1001,9 @@ func (dp *DetailPage) writeCacheAsOf(ctx context.Context, pageID string, page *n
 
 // storeInCache updates the cache for the current page after a save.
 func (dp *DetailPage) storeInCache(markdown string, truncated bool) {
+	// The content is as Notion returned it just now, which is no older
+	// than the page object at hand
+	dp.contentAsOf = lastEdited(dp.page)
 	dp.writeCache(context.Background(), dp.pageID, dp.page, markdown, truncated)
 }
 

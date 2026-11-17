@@ -511,10 +511,18 @@ func TestPrune(t *testing.T) {
 	leftover := filepath.Join(dir, tempPrefix+"123")
 	notOurs := filepath.Join(dir, "notes.json")
 	alsoNotOurs := filepath.Join(dir, "keep.txt")
-	for _, path := range []string{leftover, notOurs, alsoNotOurs} {
-		require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+	// Named like an entry (even-length hex), but not one
+	hexNamed := filepath.Join(dir, "cafe.json")
+	otherTemp := filepath.Join(dir, ".tmp-other-program")
+	for _, path := range []string{leftover, notOurs, alsoNotOurs, hexNamed, otherTemp} {
+		require.NoError(t, os.WriteFile(path, []byte(`{"budget": 2026}`), 0o600))
 	}
-	for _, path := range []string{makeCachePath(dir, "old"), leftover, notOurs, alsoNotOurs} {
+	// An entry copied to another name is not where the cache keeps it
+	copied, err := os.ReadFile(makeCachePath(dir, "old"))
+	require.NoError(t, err)
+	misplaced := filepath.Join(dir, "deadbeef.json")
+	require.NoError(t, os.WriteFile(misplaced, copied, 0o600))
+	for _, path := range []string{makeCachePath(dir, "old"), leftover, notOurs, alsoNotOurs, hexNamed, otherTemp, misplaced} {
 		require.NoError(t, os.Chtimes(path, longAgo, longAgo))
 	}
 
@@ -529,6 +537,9 @@ func TestPrune(t *testing.T) {
 	require.NoError(t, err)
 	assert.FileExists(t, notOurs, "a file the cache did not write is left alone")
 	assert.FileExists(t, alsoNotOurs)
+	assert.FileExists(t, hexNamed, "a name that looks like an entry is not enough")
+	assert.FileExists(t, otherTemp)
+	assert.FileExists(t, misplaced)
 	assert.NoFileExists(t, leftover)
 }
 
@@ -548,4 +559,27 @@ func TestSet_LeavesNoTemporaryFiles(t *testing.T) {
 	info, err := entries[0].Info()
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "readable only by the user")
+}
+
+func TestPrune_KeepsEntriesThatAreStillRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pageCache, err := NewPageCache(NewPageCacheInput{Dir: dir})
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "page", Data: "content"}))
+	longAgo := time.Now().Add(-100 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(makeCachePath(dir, "page"), longAgo, longAgo))
+
+	// Read, as when the page is opened without a connection
+	var out string
+	_, _, err = pageCache.Load(ctx, "page", &out)
+	require.NoError(t, err)
+
+	removed, err := pageCache.Prune(90 * 24 * time.Hour)
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	_, _, err = pageCache.Load(ctx, "page", &out)
+	require.NoError(t, err)
 }
