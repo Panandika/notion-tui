@@ -127,6 +127,7 @@ type ListPage struct {
 	cache        *cache.PageCache
 	databaseID   string
 	readOnly     bool
+	offline      bool // Showing saved rows: Notion could not be reached
 	keys         *keymap.Map
 
 	sort      rowSort
@@ -259,6 +260,10 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
 		lp.statusBar.SetMode(components.ModeBrowse)
+		if lp.offline && !msg.offline {
+			lp.notice = "" // "Offline: ..." is no longer true
+		}
+		lp.offline = msg.offline
 		if msg.offline {
 			lp.statusBar.SetMode(components.ModeOffline)
 			lp.notice = lp.keys.Label("Offline: these are the rows saved " + components.HumanAge(msg.age) + " ago | {row_reload}: try again")
@@ -492,6 +497,11 @@ func (lp *ListPage) startNewRow() tea.Cmd {
 		lp.statusBar.SetHelpText(ReadOnlyNotice)
 		return nil
 	}
+	if lp.offline {
+		lp.notice = lp.keys.Label("Offline: reload with {row_reload} before adding a row")
+		lp.statusBar.SetHelpText(lp.notice)
+		return nil
+	}
 	input := textinput.New()
 	input.Prompt = "New row title: "
 	input.CharLimit = 200
@@ -657,6 +667,12 @@ func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	return lp.fetchPagesCmd()
 }
 
+// Offline reports whether the rows on screen are a saved copy, shown
+// because Notion could not be reached.
+func (lp *ListPage) Offline() bool {
+	return lp.offline
+}
+
 // Filter returns the property filter in effect.
 func (lp *ListPage) Filter() notion.RowFilter {
 	return lp.filter
@@ -691,7 +707,8 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	lp.nextCursor = ""
 	filter, epoch, now := lp.filter, lp.epoch, lp.now
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
 
 		if lp.notionClient == nil {
 			return pagesLoadedMsg{
@@ -704,7 +721,8 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 		if err != nil {
 			// Without a connection, the rows saved earlier are better than
 			// an error. Only the unfiltered list is saved.
-			if saved, age, ok := lp.savedRows(ctx); ok && notion.IsOffline(err) && !filter.Active() {
+			// (read with its own context: the load's may be what ran out)
+			if saved, age, ok := lp.savedRows(context.Background()); ok && notion.IsOffline(err) && !filter.Active() {
 				return pagesLoadedMsg{epoch: epoch, pages: saved, offline: true, age: age}
 			}
 			return pagesLoadedMsg{

@@ -131,6 +131,9 @@ type cachedPage struct {
 	// and read back.
 	Title  string `json:"title,omitempty"`
 	Header string `json:"header,omitempty"`
+	// LastEdited is when Notion says the page last changed, as of the
+	// moment the copy was saved. A page changed since is loaded again.
+	LastEdited time.Time `json:"last_edited,omitempty"`
 }
 
 // editSession tracks one run of the external editor.
@@ -285,6 +288,9 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return dp, nil
 		}
 
+		if dp.offline && !msg.offline {
+			dp.clearNotice() // "Offline: ..." is no longer true
+		}
 		dp.page = msg.page
 		dp.loading = false
 		dp.err = nil
@@ -850,14 +856,18 @@ func (dp *DetailPage) clearNotice() {
 func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 	pageID := dp.pageID
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
 
 		cached, age, fresh, ok := dp.readCache(ctx, pageID)
 		if ok && fresh {
-			// Title and properties are always asked for again: they change
-			// more often than the content, and it is one quick call
+			// Title and properties are always asked for again: one quick
+			// call, which also tells whether the page changed since the
+			// copy was saved
 			page, err := dp.notionClient.GetPage(ctx, pageID)
 			switch {
+			case err == nil && page.LastEditedTime.After(cached.LastEdited):
+				return dp.fetchContent(ctx, pageID, page)
 			case err == nil:
 				return pageLoadedMsg{pageID: pageID, page: page, markdown: cached.Markdown, truncated: cached.Truncated}
 			case notion.IsOffline(err):
@@ -868,7 +878,7 @@ func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 		}
 
 		// Nothing saved, or saved too long ago: ask Notion
-		return dp.fetchPageFromAPI(pageID)
+		return dp.fetchPageFromAPI(ctx, pageID)
 	}
 }
 
@@ -876,36 +886,42 @@ func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 func (dp *DetailPage) fetchPageFromAPICmd() tea.Cmd {
 	pageID := dp.pageID
 	return func() tea.Msg {
-		return dp.fetchPageFromAPI(pageID)
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
+		return dp.fetchPageFromAPI(ctx, pageID)
 	}
 }
 
 // fetchPageFromAPI performs the actual API calls to fetch the page.
 // pageID is passed in rather than read from dp: this runs on another goroutine.
-func (dp *DetailPage) fetchPageFromAPI(pageID string) tea.Msg {
-	ctx := context.Background()
-
-	// Without a connection, a copy saved earlier is better than an error,
-	// however old it is
-	failed := func(err error) tea.Msg {
-		if notion.IsOffline(err) {
-			if cached, age, _, ok := dp.readCache(ctx, pageID); ok {
-				return offlineCopy(pageID, cached, age)
-			}
-		}
-		return pageLoadedMsg{pageID: pageID, err: err}
-	}
-
+func (dp *DetailPage) fetchPageFromAPI(ctx context.Context, pageID string) tea.Msg {
 	// Fetch page metadata
 	page, err := dp.notionClient.GetPage(ctx, pageID)
 	if err != nil {
-		return failed(fmt.Errorf("fetch page: %w", err))
+		return dp.loadFailed(pageID, fmt.Errorf("fetch page: %w", err))
 	}
+	return dp.fetchContent(ctx, pageID, page)
+}
 
+// loadFailed is the result of a load that failed. Without a connection, a
+// copy saved earlier is better than an error, however old it is.
+func (dp *DetailPage) loadFailed(pageID string, err error) tea.Msg {
+	if notion.IsOffline(err) {
+		// Not the load's context: it may be what ran out
+		if cached, age, _, ok := dp.readCache(context.Background(), pageID); ok {
+			return offlineCopy(pageID, cached, age)
+		}
+	}
+	return pageLoadedMsg{pageID: pageID, err: err}
+}
+
+// fetchContent loads the content of a page whose metadata is at hand, and
+// saves both.
+func (dp *DetailPage) fetchContent(ctx context.Context, pageID string, page *notionapi.Page) tea.Msg {
 	// One call returns the whole page, nested content included
 	content, err := dp.notionClient.GetPageMarkdown(ctx, pageID)
 	if err != nil {
-		return failed(fmt.Errorf("fetch content: %w", err))
+		return dp.loadFailed(pageID, fmt.Errorf("fetch content: %w", err))
 	}
 
 	dp.writeCache(ctx, pageID, page, content.Markdown, content.Truncated)
@@ -932,6 +948,13 @@ func (dp *DetailPage) readCache(ctx context.Context, pageID string) (entry cache
 	return entry, age, fresh, true
 }
 
+func lastEdited(page *notionapi.Page) time.Time {
+	if page == nil {
+		return time.Time{}
+	}
+	return page.LastEditedTime
+}
+
 // offlineCopy is the result of a load answered from a saved copy.
 func offlineCopy(pageID string, cached cachedPage, age time.Duration) pageLoadedMsg {
 	return pageLoadedMsg{
@@ -955,7 +978,7 @@ func (dp *DetailPage) writeCache(ctx context.Context, pageID string, page *notio
 		PageID: pageID,
 		Data: cachedPage{
 			Format: cacheFormat, Markdown: markdown, Truncated: truncated,
-			Title: notion.PageTitle(page), Header: pageHeader(page),
+			Title: notion.PageTitle(page), Header: pageHeader(page), LastEdited: lastEdited(page),
 		},
 		TTL: time.Hour,
 	})

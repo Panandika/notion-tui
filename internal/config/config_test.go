@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -412,4 +413,26 @@ func TestResolveCacheDir(t *testing.T) {
 			assert.Equal(t, tt.want, resolveCacheDir(tt.configured, tt.homeDir))
 		})
 	}
+}
+
+// Not parallel: viper's settings are process-wide.
+func TestLoad_CacheDir(t *testing.T) {
+	t.Setenv("HOME", "/home/ada")
+	t.Cleanup(viper.Reset)
+
+	viper.Reset()
+	viper.Set("notion_token", "token")
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "/home/ada/.cache/notion-tui", cfg.CacheDir, "nothing configured: the default directory")
+
+	viper.Set("cache_dir", "")
+	cfg, err = Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CacheDir, `cache_dir: "" has always meant no cache, and still does`)
+
+	viper.Set("cache_dir", "~/elsewhere")
+	cfg, err = Load()
+	require.NoError(t, err)
+	assert.Equal(t, "/home/ada/elsewhere", cfg.CacheDir)
 }

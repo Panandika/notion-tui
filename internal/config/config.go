@@ -77,6 +77,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// An empty cache_dir used to be how the cache was turned off, and
+	// still is: only a setting that is absent means the default directory.
+	if viper.IsSet("cache_dir") && strings.TrimSpace(viper.GetString("cache_dir")) == "" {
+		cfg.CacheDir = CacheOff
+	}
 	cfg.CacheDir = resolveCacheDir(cfg.CacheDir, os.UserHomeDir)
 
 	// Migrate legacy single database config to new format

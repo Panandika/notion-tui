@@ -89,10 +89,51 @@ func TestDetailPage_ReloadLeavesOfflineWhenNotionIsBack(t *testing.T) {
 
 	assert.False(t, dp.Offline())
 	assert.Equal(t, "newer content", dp.Markdown())
-	assert.NotContains(t, dp.View(), "OFFLINE")
-	_, cmd := dp.Update(keyRune('t'))
-	_ = cmd
-	assert.NotContains(t, dp.View(), "Offline copy", "changes are possible again")
+	view := dp.View()
+	assert.NotContains(t, view, "OFFLINE")
+	assert.NotContains(t, view, "Offline:", "the notice went with the state")
+
+	// Changes are possible again: archiving asks its question
+	dp.Update(keyRune('D'))
+	assert.True(t, dp.InMode())
+}
+
+func TestDetailPage_OfflineCommentsCannotBePosted(t *testing.T) {
+	t.Parallel()
+
+	client, open := offlineFixture(t)
+	client.ErrorToReturn = errNoNetwork
+	dp, _ := open()
+	client.ErrorToReturn = nil // The list itself loads in this test
+	_, cmd := dp.Update(keyRune('c'))
+	dp.Update(cmd())
+
+	dp.Update(keyRune('a'))
+
+	assert.Equal(t, modeComments, dp.mode, "no prompt")
+	assert.Contains(t, dp.View(), "Offline: a comment cannot be posted now")
+}
+
+func TestDetailPage_SavedCopyOfAnOlderVersionStillOpens(t *testing.T) {
+	t.Parallel()
+
+	pageCache := mustCreateCache(t)
+	// What the previous version saved: content only, no title or header
+	require.NoError(t, pageCache.Set(context.Background(), cache.SetInput{
+		PageID: "page-1",
+		Data:   map[string]any{"format": cacheFormat, "markdown": "old copy"},
+	}))
+	client := testhelpers.NewMockNotionClient()
+	client.ErrorToReturn = errNoNetwork
+	viewer := newMockViewer()
+	dp := NewDetailPage(NewDetailPageInput{Width: 100, Height: 24, Viewer: viewer, NotionClient: client, Cache: pageCache, PageID: "page-1"})
+
+	dp.Update(dp.Init()())
+
+	require.NoError(t, dp.Error())
+	assert.True(t, dp.Offline())
+	assert.Contains(t, viewer.markdown, "old copy")
+	assert.Equal(t, "Untitled", dp.Title())
 }
 
 func TestDetailPage_OnlyAMissingConnectionFallsBackToTheCopy(t *testing.T) {
@@ -156,6 +197,18 @@ func TestListPage_OfflineShowsTheSavedRows(t *testing.T) {
 	assert.Contains(t, view, "OFFLINE")
 	assert.Contains(t, view, "Offline: these are the rows saved")
 	require.NoError(t, lp.err)
+	assert.True(t, lp.Offline())
+
+	_, cmd := lp.Update(listKey('n'))
+	assert.Nil(t, cmd)
+	assert.False(t, lp.InMode(), "no row is added to a saved copy")
+	assert.Contains(t, lp.View(), "Offline: reload with r before adding a row")
+
+	online = true
+	feed(lp, lp.Refresh())
+	assert.False(t, lp.Offline())
+	assert.NotContains(t, lp.View(), "Offline", "badge and notice go when Notion is back")
+	online = false
 
 	t.Run("a filtered list is not answered from the unfiltered copy", func(t *testing.T) {
 		online = true
