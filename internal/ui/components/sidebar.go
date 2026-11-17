@@ -196,6 +196,11 @@ func (s *Sidebar) SetItems(items []Item) {
 	}
 }
 
+// SetTitle changes the heading above the items.
+func (s *Sidebar) SetTitle(title string) {
+	s.list.Title = title
+}
+
 // SelectID moves the cursor to the item with the given ID, if it is in the
 // list. It reports whether the item was found.
 func (s *Sidebar) SelectID(id string) bool {

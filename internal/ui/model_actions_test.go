@@ -488,7 +488,9 @@ func listModel(t *testing.T) AppModel {
 	m = updated.(AppModel)
 	require.Equal(t, PageList, m.currentPage)
 	// Deliver the rows the way a finished load does
-	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(pages.NewPage("row-1", "Quarterly report", "", time.Now())))
+	list, ok := m.pages[PageList].(*pages.ListPage)
+	require.True(t, ok)
+	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(list, pages.NewPage("row-1", "Quarterly report", "", time.Now())))
 	return updated.(AppModel)
 }
 
@@ -539,7 +541,7 @@ func TestModel_ListResultsReachTheListFromAnyPage(t *testing.T) {
 	m = updated.(AppModel)
 	require.Equal(t, PageDetail, m.currentPage)
 
-	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(pages.NewPage("row-9", "Loaded in background", "", time.Now())))
+	updated, _ = m.Update(pages.NewRowsLoadedMsgForTest(m.pages[PageList].(*pages.ListPage), pages.NewPage("row-9", "Loaded in background", "", time.Now())))
 	m = updated.(AppModel)
 
 	assert.Contains(t, m.pages[PageList].(*pages.ListPage).View(), "Loaded in background")

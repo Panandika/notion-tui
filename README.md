@@ -121,7 +121,12 @@ Press `?` in the app for the full key reference.
 | `n` | New row (asks for a title) |
 | `s` | Change sort order: Notion order, title, last edited |
 | `/` | Filter rows by title |
+| `p` | Show only rows with a certain property value (see below) |
+| `P` | Show all rows again |
+| `m` | Load more rows |
 | `r` | Reload |
+
+`p` lists the database's status, select, multi-select, checkbox and date properties; pick one, then a condition (`is Done`, `is checked`, `is before today`, `is in the next 7 days` (today included), `is empty`, ...). Notion does the filtering, so rows that are not loaded yet are covered too, and loading more or reloading keeps the filter. The heading above the rows and the status bar name the filter while it is on.
 
 ### Command palette
 `Ctrl+P` opens it; move with `j` / `k`, filter with `/`, run with `Enter`. Commands: Search Workspace, Switch Database, Refresh, New Page, Export Page, Help, Quit.
@@ -224,7 +229,7 @@ keys:
 
 A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab` or `shift+tab`; put punctuation in quotes (`back: "<"`). Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, `ctrl+u`, `ctrl+d`, `ctrl+t`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
 
-Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
+Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_property_filter`, `row_clear_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
 
 ### Multiple databases
 
@@ -442,7 +447,9 @@ Special thanks to:
 
 Planned next, roughly in order:
 
-- Filter page and database lists
+- Comments: read a page's open comments, add one
+- Offline reading from the cache
+- Saved database views
 
 ---
 
