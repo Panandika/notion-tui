@@ -971,6 +971,12 @@ func offlineCopy(pageID string, cached cachedPage, age time.Duration) pageLoaded
 // writeCache stores page content. Caching is best effort: a failed write
 // only means the next load hits the API again, so the error is dropped.
 func (dp *DetailPage) writeCache(ctx context.Context, pageID string, page *notionapi.Page, markdown string, truncated bool) {
+	dp.writeCacheAsOf(ctx, pageID, page, markdown, truncated, lastEdited(page))
+}
+
+// writeCacheAsOf stores page content that was current at contentAsOf,
+// which may be earlier than the page's own last change.
+func (dp *DetailPage) writeCacheAsOf(ctx context.Context, pageID string, page *notionapi.Page, markdown string, truncated bool, contentAsOf time.Time) {
 	if dp.cache == nil {
 		return
 	}
@@ -978,7 +984,7 @@ func (dp *DetailPage) writeCache(ctx context.Context, pageID string, page *notio
 		PageID: pageID,
 		Data: cachedPage{
 			Format: cacheFormat, Markdown: markdown, Truncated: truncated,
-			Title: notion.PageTitle(page), Header: pageHeader(page), LastEdited: lastEdited(page),
+			Title: notion.PageTitle(page), Header: pageHeader(page), LastEdited: contentAsOf,
 		},
 		TTL: time.Hour,
 	})

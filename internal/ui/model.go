@@ -126,6 +126,9 @@ func (m *AppModel) statusMode() string {
 // modeReadOnly is shown in the status bar while changes are turned off.
 const modeReadOnly = "READ-ONLY"
 
+// cacheMaxAge is how long a saved copy is kept after it was last written.
+const cacheMaxAge = 90 * 24 * time.Hour
+
 // NewModelInput contains the parameters for creating a new AppModel.
 type NewModelInput struct {
 	Config *config.Config
@@ -155,6 +158,10 @@ func NewModel(input NewModelInput) AppModel {
 		if err != nil {
 			// Fall back to no cache if initialization fails
 			cacheInstance = nil
+		} else {
+			// Copies not written for a long time are of pages no longer
+			// visited; without this the directory only ever grows.
+			_, _ = cacheInstance.Prune(cacheMaxAge)
 		}
 	}
 

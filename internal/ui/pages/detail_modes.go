@@ -768,7 +768,13 @@ func (dp *DetailPage) handlePropertySaved(msg propertySavedMsg) tea.Cmd {
 		return nil
 	}
 	dp.statusBar.SetSyncStatus(components.StatusSynced)
+	// The saved copy gets the new properties, so reading it offline does
+	// not show the old value. It keeps the time of the content it holds:
+	// the content was not loaded again, and a change made elsewhere in the
+	// meantime must still be noticed at the next visit.
+	contentAsOf := lastEdited(dp.page)
 	dp.page = msg.page
+	dp.writeCacheAsOf(context.Background(), dp.pageID, dp.page, dp.markdown, dp.truncated, contentAsOf)
 
 	// Back to the property list, which now shows the new value, and redraw
 	// the header behind it.

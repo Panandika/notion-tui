@@ -496,3 +496,56 @@ func TestLoad(t *testing.T) {
 	_, _, err = pageCache.Load(ctx, "missing", &got)
 	assert.Error(t, err)
 }
+
+func TestPrune(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pageCache, err := NewPageCache(NewPageCacheInput{Dir: dir})
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "old", Data: "x"}))
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "recent", Data: "y"}))
+
+	longAgo := time.Now().Add(-100 * 24 * time.Hour)
+	leftover := filepath.Join(dir, tempPrefix+"123")
+	notOurs := filepath.Join(dir, "notes.json")
+	alsoNotOurs := filepath.Join(dir, "keep.txt")
+	for _, path := range []string{leftover, notOurs, alsoNotOurs} {
+		require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+	}
+	for _, path := range []string{makeCachePath(dir, "old"), leftover, notOurs, alsoNotOurs} {
+		require.NoError(t, os.Chtimes(path, longAgo, longAgo))
+	}
+
+	removed, err := pageCache.Prune(90 * 24 * time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, 2, removed, "the old entry and the unfinished write")
+
+	var out string
+	_, _, err = pageCache.Load(ctx, "old", &out)
+	require.Error(t, err)
+	_, _, err = pageCache.Load(ctx, "recent", &out)
+	require.NoError(t, err)
+	assert.FileExists(t, notOurs, "a file the cache did not write is left alone")
+	assert.FileExists(t, alsoNotOurs)
+	assert.NoFileExists(t, leftover)
+}
+
+func TestSet_LeavesNoTemporaryFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pageCache, err := NewPageCache(NewPageCacheInput{Dir: dir})
+	require.NoError(t, err)
+	for range 3 {
+		require.NoError(t, pageCache.Set(context.Background(), SetInput{PageID: "page", Data: "content"}))
+	}
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	info, err := entries[0].Info()
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "readable only by the user")
+}

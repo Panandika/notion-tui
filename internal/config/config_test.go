@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -435,4 +437,31 @@ func TestLoad_CacheDir(t *testing.T) {
 	cfg, err = Load()
 	require.NoError(t, err)
 	assert.Equal(t, "/home/ada/elsewhere", cfg.CacheDir)
+}
+
+// Not parallel: viper's settings are process-wide.
+func TestLoad_RelativeCacheDir(t *testing.T) {
+	t.Setenv("HOME", "/home/ada")
+	t.Cleanup(viper.Reset)
+
+	configDir := t.TempDir()
+	configFile := filepath.Join(configDir, "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("notion_token: token\ncache_dir: local-cache\n"), 0o600))
+
+	viper.Reset()
+	viper.SetConfigFile(configFile)
+	require.NoError(t, viper.ReadInConfig())
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "local-cache"), cfg.CacheDir,
+		"relative to the config file, wherever the app is started")
+
+	// Typed in a shell, a relative directory starts from where the shell is
+	t.Setenv("NOTION_TUI_CACHE_DIR", "from-env")
+	viper.Set("cache_dir", "from-env")
+	cfg, err = Load()
+	require.NoError(t, err)
+	workingDir, err := os.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(workingDir, "from-env"), cfg.CacheDir)
 }

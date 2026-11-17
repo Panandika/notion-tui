@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -153,7 +154,7 @@ func (c *PageCache) Set(ctx context.Context, input SetInput) error {
 
 	cachePath := makeCachePath(c.cacheDir, input.PageID)
 
-	if err := os.WriteFile(cachePath, entryBytes, 0600); err != nil {
+	if err := writeFileAtomic(cachePath, entryBytes); err != nil {
 		return fmt.Errorf("write cache file %s: %w", cachePath, err)
 	}
 
@@ -212,6 +213,71 @@ func (c *PageCache) Clear() error {
 	c.stats.Size = 0
 
 	return nil
+}
+
+// writeFileAtomic writes a file under a temporary name and renames it into
+// place, so a reader (or a crash) never sees half an entry.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), tempPrefix+"*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmpName, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmpName)
+	}
+	return err
+}
+
+// tempPrefix starts the name of a file that is still being written.
+const tempPrefix = ".tmp-"
+
+// Prune deletes entries that were last written more than maxAge ago, and
+// temporary files left behind by a write that never finished. It returns
+// how many files it removed. Only the cache's own files are touched:
+// "<hex>.json" entries and its temporary files.
+func (c *PageCache) Prune(maxAge time.Duration) (removed int, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entries, err := os.ReadDir(c.cacheDir)
+	if err != nil {
+		return 0, fmt.Errorf("read cache directory %s: %w", c.cacheDir, err)
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !isCacheFile(entry.Name()) {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.Remove(filepath.Join(c.cacheDir, entry.Name())) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// isCacheFile reports whether a file name is one this cache writes.
+func isCacheFile(name string) bool {
+	if strings.HasPrefix(name, tempPrefix) {
+		return true
+	}
+	stem, isJSON := strings.CutSuffix(name, ".json")
+	if !isJSON || stem == "" {
+		return false
+	}
+	_, err := hex.DecodeString(stem)
+	return err == nil
 }
 
 // Stats returns the current cache statistics.
