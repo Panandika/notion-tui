@@ -78,6 +78,14 @@ func (m *MockNotionClient) GetDatabase(ctx context.Context, id string) (*notiona
 	return nil, errors.New("not implemented")
 }
 
+func (m *MockNotionClient) ListComments(context.Context, string) ([]notion.Comment, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) AddComment(context.Context, string, string, string) error {
+	return errors.New("not implemented")
+}
+
 func (m *MockNotionClient) SetPageProperty(context.Context, string, notion.PropertyUpdate) error {
 	return errors.New("not implemented")
 }

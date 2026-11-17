@@ -158,9 +158,18 @@ type DetailPage struct {
 	exportDir string
 	readOnly  bool
 	keys      *keymap.Map
-	session   *editSession
-	quickExit time.Duration // See quickExitThreshold
-	busy      bool          // An edit, save, create or export is in progress
+
+	// Comments mode
+	comments        []notion.Comment
+	commentsLoading bool
+	commentsSeq     int    // Counts loads, so an older answer is dropped
+	commentsErr     string // Why the list could not be loaded
+	commentExpanded bool   // The selected comment gets most of the screen
+	commentInput    textinput.Model
+	commentThread   string // Thread a reply goes to; empty for a new comment
+	session         *editSession
+	quickExit       time.Duration // See quickExitThreshold
+	busy            bool          // An edit, save, create or export is in progress
 
 	// Modes shown in place of the page view (see detail_modes.go)
 	mode        detailMode
@@ -295,6 +304,13 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case archivedMsg:
 		return dp, dp.handleArchived(msg)
 
+	case commentsLoadedMsg:
+		dp.handleCommentsLoaded(msg)
+		return dp, nil
+
+	case commentAddedMsg:
+		return dp, dp.handleCommentAdded(msg)
+
 	case linkOpenedMsg:
 		dp.handleLinkOpened(msg)
 		return dp, nil
@@ -339,6 +355,9 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "o":
 			return dp, dp.StartLinks()
+
+		case "c":
+			return dp, dp.StartComments()
 
 		case "/":
 			return dp, dp.StartSearch()

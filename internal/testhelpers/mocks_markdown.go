@@ -124,3 +124,32 @@ func (m *MockNotionClient) SetPageProperty(ctx context.Context, pageID string, u
 	}
 	return m.ErrorToReturn
 }
+
+// AddCommentCall records one call to AddComment.
+type AddCommentCall struct {
+	PageID   string
+	ThreadID string
+	Text     string
+}
+
+// ListComments returns CommentsToReturn, or ErrorToReturn.
+func (m *MockNotionClient) ListComments(_ context.Context, _ string) ([]notion.Comment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ListCommentsCalls++
+	if m.ErrorToReturn != nil {
+		return nil, m.ErrorToReturn
+	}
+	return append([]notion.Comment(nil), m.CommentsToReturn...), nil
+}
+
+// AddComment records the comment and returns ErrorToReturn.
+func (m *MockNotionClient) AddComment(_ context.Context, pageID, threadID, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.AddCommentCalls = append(m.AddCommentCalls, AddCommentCall{PageID: pageID, ThreadID: threadID, Text: text})
+	if m.AddCommentErr != nil {
+		return m.AddCommentErr
+	}
+	return m.ErrorToReturn
+}

@@ -42,6 +42,7 @@ var helpSections = []helpSection{
 		{"{edit}", "edit the page in $VISUAL / $EDITOR"},
 		{"{properties}", "change properties (status, select, date, checkbox)"},
 		{"{todos}", "check or uncheck to-dos"},
+		{"{comments}", "read the page's open comments; add one or reply"},
 		{"{links}", "follow a link: child page, database, mention, web"},
 		{"{back}  {forward}", "back / forward through pages read"},
 		{"{find}  {find_next}  {find_previous}", "find in page, next, previous"},

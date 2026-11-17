@@ -172,6 +172,7 @@ cache_dir: "~/.cache/notion-tui"
 # properties      p         page
 # todos           t         page
 # links           o         page
+# comments        c         page
 # back            [         page
 # forward         ]         page
 # find            /         page

@@ -21,6 +21,10 @@ type NotionClient interface {
 	ReplacePageMarkdown(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
 	CreatePageMarkdown(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
 
+	// Comments on a page
+	ListComments(ctx context.Context, pageID string) ([]notion.Comment, error)
+	AddComment(ctx context.Context, pageID, threadID, text string) error
+
 	// Page properties
 	GetDatabase(ctx context.Context, id string) (*notionapi.Database, error)
 	SetPageProperty(ctx context.Context, pageID string, update notion.PropertyUpdate) error

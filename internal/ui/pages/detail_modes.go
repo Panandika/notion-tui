@@ -20,14 +20,16 @@ import (
 type detailMode int
 
 const (
-	modeView       detailMode = iota // The page itself
-	modeProperties                   // List of editable properties
-	modeOptions                      // Choices for one status or select property
-	modeDate                         // Text prompt for one date property
-	modeTodos                        // List of the page's to-dos
-	modeLinks                        // List of things to follow from the page
-	modeSearch                       // Text prompt for searching the page
-	modeConfirm                      // Yes/no question before archiving
+	modeView         detailMode = iota // The page itself
+	modeProperties                     // List of editable properties
+	modeOptions                        // Choices for one status or select property
+	modeDate                           // Text prompt for one date property
+	modeTodos                          // List of the page's to-dos
+	modeLinks                          // List of things to follow from the page
+	modeSearch                         // Text prompt for searching the page
+	modeConfirm                        // Yes/no question before archiving
+	modeComments                       // List of the page's open comments
+	modeCommentInput                   // Text prompt for a new comment or reply
 )
 
 const (
@@ -333,6 +335,10 @@ func (dp *DetailPage) setMode(mode detailMode) {
 		dp.statusBar.SetHelpText(searchHelpText)
 	case modeConfirm:
 		dp.statusBar.SetHelpText(confirmHelpText)
+	case modeComments:
+		dp.statusBar.SetHelpText(commentsHelpText)
+	case modeCommentInput:
+		dp.statusBar.SetHelpText(commentInputHelpText)
 	default:
 		dp.statusBar.SetHelpText(dp.keys.Label(detailHelpText))
 	}
@@ -361,6 +367,10 @@ func (dp *DetailPage) updateMode(msg tea.KeyMsg) tea.Cmd {
 		return dp.updateSearch(msg)
 	case modeConfirm:
 		return dp.updateConfirm(msg)
+	case modeComments:
+		return dp.updateComments(msg)
+	case modeCommentInput:
+		return dp.updateCommentInput(msg)
 	default:
 		return nil
 	}
@@ -822,6 +832,14 @@ func (dp *DetailPage) renderMode() string {
 	bold := lipgloss.NewStyle().Bold(true)
 	var body string
 	switch dp.mode {
+	case modeComments:
+		body = dp.renderComments(dp.width-4, height-2-len(footer))
+	case modeCommentInput:
+		heading := "New comment"
+		if dp.commentThread != "" {
+			heading = "Reply"
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left, bold.Render(heading), "", dp.commentInput.View())
 	case modeSearch:
 		body = lipgloss.JoinVertical(lipgloss.Left, bold.Render("Find in page"), "", dp.searchInput.View())
 	case modeConfirm:

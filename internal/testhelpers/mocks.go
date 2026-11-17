@@ -29,6 +29,10 @@ type MockNotionClient struct {
 	ReplacePageMarkdownFunc  func(ctx context.Context, id, markdown string) (*notion.PageMarkdown, error)
 	CreatePageMarkdownFunc   func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
 	DatabaseSchemaToReturn   *notionapi.Database
+	CommentsToReturn         []notion.Comment
+	ListCommentsCalls        int
+	AddCommentCalls          []AddCommentCall
+	AddCommentErr            error // Fails AddComment only
 	GetDatabaseFunc          func(ctx context.Context, id string) (*notionapi.Database, error)
 	SetPagePropertyFunc      func(ctx context.Context, pageID string, update notion.PropertyUpdate) error
 	GetDatabaseCalls         []string

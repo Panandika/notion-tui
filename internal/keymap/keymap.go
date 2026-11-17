@@ -48,6 +48,7 @@ func Actions() []Action {
 		{"properties", Page, "p"},
 		{"todos", Page, "t"},
 		{"links", Page, "o"},
+		{"comments", Page, "c"},
 		{"back", Page, "["},
 		{"forward", Page, "]"},
 		{"find", Page, "/"},
