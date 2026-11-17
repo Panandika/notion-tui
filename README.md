@@ -447,6 +447,9 @@ Special thanks to:
 
 Planned next, roughly in order:
 
+- Comments: read a page's open comments, add one
+- Offline reading from the cache
+- Saved database views
 
 ---
 
