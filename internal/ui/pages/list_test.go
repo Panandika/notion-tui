@@ -28,6 +28,31 @@ type MockNotionClient struct {
 
 	CreatePageMarkdownFunc func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
 	GetDatabaseFunc        func(ctx context.Context, id string) (*notionapi.Database, error)
+
+	ListViewsFunc     func(ctx context.Context, databaseID string) ([]notion.View, error)
+	QueryViewFunc     func(ctx context.Context, viewID string) (*notion.ViewRows, error)
+	ViewRowsAfterFunc func(ctx context.Context, viewID, queryID, cursor string) (*notion.ViewRows, error)
+}
+
+func (m *MockNotionClient) ListViews(ctx context.Context, databaseID string) ([]notion.View, error) {
+	if m.ListViewsFunc != nil {
+		return m.ListViewsFunc(ctx, databaseID)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) QueryView(ctx context.Context, viewID string) (*notion.ViewRows, error) {
+	if m.QueryViewFunc != nil {
+		return m.QueryViewFunc(ctx, viewID)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *MockNotionClient) ViewRowsAfter(ctx context.Context, viewID, queryID, cursor string) (*notion.ViewRows, error) {
+	if m.ViewRowsAfterFunc != nil {
+		return m.ViewRowsAfterFunc(ctx, viewID, queryID, cursor)
+	}
+	return nil, errors.New("not implemented")
 }
 
 func (m *MockNotionClient) QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
@@ -1611,5 +1636,182 @@ func TestListPage_FilterPickerWithOtherThingsGoingOn(t *testing.T) {
 		view := lp.View()
 		assert.Contains(t, view, "Rows are limited to: Status is Todo")
 		assert.Contains(t, view, "Press P to show all rows")
+	})
+}
+
+// viewClient has a database of rows 1..3 (as its first page returns them)
+// and one view, "Urgent", that shows rows 3, 9 and then 1: row 9 is not
+// among the database's first rows.
+func viewClient(fetched *[]string) *MockNotionClient {
+	row := func(id string) notionapi.Page { return newTestNotionPage(id, "Row "+id, "") }
+	return &MockNotionClient{
+		ListViewsFunc: func(context.Context, string) ([]notion.View, error) {
+			return []notion.View{{ID: "v-all", Name: "All", Type: "table"}, {ID: "v-urgent", Name: "Urgent\x1b[31m", Type: "board"}}, nil
+		},
+		QueryViewFunc: func(_ context.Context, viewID string) (*notion.ViewRows, error) {
+			if viewID != "v-urgent" {
+				return nil, errors.New("unexpected view " + viewID)
+			}
+			return &notion.ViewRows{QueryID: "q1", RowIDs: []string{"3", "9"}, NextCursor: "cur", HasMore: true}, nil
+		},
+		ViewRowsAfterFunc: func(_ context.Context, viewID, queryID, cursor string) (*notion.ViewRows, error) {
+			if viewID != "v-urgent" || queryID != "q1" || cursor != "cur" {
+				return nil, errors.New("unexpected page of view rows")
+			}
+			return &notion.ViewRows{QueryID: "q1", RowIDs: []string{"1"}}, nil
+		},
+		QueryDatabaseFunc: func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			return &notionapi.DatabaseQueryResponse{Results: []notionapi.Page{row("1"), row("2"), row("3")}}, nil
+		},
+		GetPageFunc: func(_ context.Context, id string) (*notionapi.Page, error) {
+			*fetched = append(*fetched, id)
+			page := row(id)
+			return &page, nil
+		},
+	}
+}
+
+func rowIDs(lp *ListPage) []string {
+	ids := make([]string, 0, len(lp.pageList))
+	for _, row := range lp.pageList {
+		ids = append(ids, row.ID)
+	}
+	return ids
+}
+
+func TestListPage_SavedView(t *testing.T) {
+	t.Parallel()
+
+	// chooseUrgent opens the view picker and picks the second view.
+	chooseUrgent := func(t *testing.T, lp *ListPage) {
+		t.Helper()
+		_, cmd := lp.Update(listKey('v'))
+		feed(lp, cmd)
+		require.True(t, lp.InMode(), "the view picker is open")
+		view := lp.View()
+		require.Contains(t, view, "All")
+		require.Contains(t, view, "Urgent")
+		require.NotContains(t, view, "\x1b[31m", "a view's name cannot colour the screen")
+		lp.Update(listKey('j'))
+		_, cmd = lp.Update(listEnter())
+		feed(lp, cmd)
+	}
+
+	t.Run("shows the view's rows in the view's order", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		lp := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+
+		chooseUrgent(t, lp)
+
+		assert.False(t, lp.InMode())
+		assert.Equal(t, "v-urgent", lp.ShownView().ID)
+		assert.Equal(t, []string{"3", "9"}, rowIDs(lp))
+		assert.Equal(t, []string{"9"}, fetched, "only the row the database's first page did not bring is fetched")
+		assert.True(t, lp.HasMore())
+		view := lp.View()
+		assert.Contains(t, view, "Row 9")
+		assert.Contains(t, view, "in the view Urgent")
+	})
+
+	t.Run("loading more continues the same result", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		lp := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+		chooseUrgent(t, lp)
+
+		_, cmd := lp.Update(listKey('m'))
+		feed(lp, cmd)
+
+		assert.Equal(t, []string{"3", "9", "1"}, rowIDs(lp))
+		assert.Equal(t, []string{"9"}, fetched, "row 1 was already known")
+		assert.False(t, lp.HasMore())
+	})
+
+	t.Run("an expired result says so", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		client := viewClient(&fetched)
+		client.ViewRowsAfterFunc = func(context.Context, string, string, string) (*notion.ViewRows, error) {
+			return nil, fmt.Errorf("more rows: %w", &notionapi.Error{Status: 404, Message: "Could not find view query"})
+		}
+		lp := loadedList(t, client, newTestPage("1", "Row 1", ""))
+		chooseUrgent(t, lp)
+
+		_, cmd := lp.Update(listKey('m'))
+		feed(lp, cmd)
+
+		view := lp.View()
+		assert.Contains(t, view, "expired")
+		assert.Contains(t, view, "Press r to try again")
+
+		// Reloading runs the view again
+		_, cmd = lp.Update(listKey('r'))
+		feed(lp, cmd)
+		assert.Equal(t, []string{"3", "9"}, rowIDs(lp))
+	})
+
+	t.Run("the clear key shows every row again", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		lp := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+		chooseUrgent(t, lp)
+
+		_, cmd := lp.Update(listKey('P'))
+		feed(lp, cmd)
+
+		assert.Empty(t, lp.ShownView().ID)
+		assert.Equal(t, []string{"1", "2", "3"}, rowIDs(lp))
+		assert.NotContains(t, lp.View(), "in the view")
+	})
+
+	t.Run("a property filter replaces the view", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		lp := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+		chooseUrgent(t, lp)
+
+		feed(lp, lp.applyFilter(notion.RowFilter{}))
+
+		assert.Empty(t, lp.ShownView().ID)
+	})
+
+	t.Run("a database without views says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{
+			ListViewsFunc: func(context.Context, string) ([]notion.View, error) { return nil, nil },
+		}, newTestPage("1", "Row 1", ""))
+
+		_, cmd := lp.Update(listKey('v'))
+		feed(lp, cmd)
+
+		assert.False(t, lp.InMode())
+		assert.Contains(t, lp.View(), "no views")
+	})
+
+	t.Run("a view without rows says so", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		client := viewClient(&fetched)
+		client.QueryViewFunc = func(context.Context, string) (*notion.ViewRows, error) { return &notion.ViewRows{QueryID: "q"}, nil }
+		lp := loadedList(t, client, newTestPage("1", "Row 1", ""))
+
+		chooseUrgent(t, lp)
+
+		view := lp.View()
+		assert.Contains(t, view, "The view Urgent has no rows")
+		assert.Contains(t, view, "Press P to show all rows")
+	})
+
+	t.Run("esc while the views load cancels", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		lp := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+
+		_, cmd := lp.Update(listKey('v'))
+		lp.Update(listEsc())
+		feed(lp, cmd) // The answer arrives after the user moved on
+
+		assert.False(t, lp.InMode(), "no picker opens on its own")
 	})
 }

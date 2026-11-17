@@ -64,6 +64,7 @@ func Actions() []Action {
 		{"row_more", Rows, "m"},
 		{"row_property_filter", Rows, "p"},
 		{"row_clear_filter", Rows, "P"},
+		{"row_view", Rows, "v"},
 
 		{"tree_reload", Tree, "r"},
 	}

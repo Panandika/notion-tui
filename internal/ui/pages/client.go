@@ -32,6 +32,11 @@ type NotionClient interface {
 	// Database operations
 	QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error)
 
+	// Views saved on a database
+	ListViews(ctx context.Context, databaseID string) ([]notion.View, error)
+	QueryView(ctx context.Context, viewID string) (*notion.ViewRows, error)
+	ViewRowsAfter(ctx context.Context, viewID, queryID, cursor string) (*notion.ViewRows, error)
+
 	// Search operations
 	Search(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 }
