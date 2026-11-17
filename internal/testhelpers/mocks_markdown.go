@@ -148,5 +148,8 @@ func (m *MockNotionClient) AddComment(_ context.Context, pageID, threadID, text 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.AddCommentCalls = append(m.AddCommentCalls, AddCommentCall{PageID: pageID, ThreadID: threadID, Text: text})
+	if m.AddCommentErr != nil {
+		return m.AddCommentErr
+	}
 	return m.ErrorToReturn
 }

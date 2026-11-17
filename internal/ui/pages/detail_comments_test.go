@@ -2,6 +2,7 @@ package pages
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -148,7 +149,7 @@ func TestComments_AddAndReply(t *testing.T) {
 		fx := openComments(t, testComments())
 		fx.page.Update(keyRune('a'))
 		typeInto(fx, "important")
-		fx.client.ErrorToReturn = errors.New("insufficient permissions")
+		fx.client.AddCommentErr = errors.New("insufficient permissions")
 
 		_, cmd := fx.page.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		fx.drain(t, cmd)
@@ -180,7 +181,7 @@ func TestComments_ResultForAnotherPageIsIgnored(t *testing.T) {
 
 	fx := openComments(t, nil)
 
-	fx.page.Update(commentsLoadedMsg{pageID: "other-page", comments: testComments()})
+	fx.page.Update(commentsLoadedMsg{pageID: "other-page", seq: fx.page.commentsSeq, comments: testComments()})
 
 	assert.Empty(t, fx.page.comments)
 }
@@ -188,8 +189,98 @@ func TestComments_ResultForAnotherPageIsIgnored(t *testing.T) {
 func TestComments_ControlSequencesAreNotDrawn(t *testing.T) {
 	t.Parallel()
 
-	fx := openComments(t, []notion.Comment{{ID: "c", ThreadID: "t", Author: "Eve\x1b[31m", Text: "\x1b[2Jwiped?", Created: time.Now()}})
+	fx := openComments(t, []notion.Comment{{ID: "c", ThreadID: "t", Author: "Eve\x1b[31m\x07", Text: "\x1b[2Jwiped?\rOVER\b\x07\x7f", Created: time.Now()}})
 
-	assert.NotContains(t, fx.page.View(), "\x1b[2J", "text from Notion cannot drive the terminal")
-	assert.Contains(t, fx.page.View(), "wiped?")
+	view := fx.page.View()
+	for _, bad := range []string{"\x1b[2J", "\x1b[31m", "\r", "\b", "\x07", "\x7f"} {
+		assert.NotContains(t, view, bad, "text from Notion cannot drive the terminal: %q", bad)
+	}
+	assert.Contains(t, view, "wiped?OVER")
+	assert.Contains(t, view, "Eve wrote:")
+}
+
+func TestComments_OnlyTheLatestLoadCounts(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "Some text")
+	fx.client.CommentsToReturn = testComments()
+
+	// Opened, closed and opened again before the first answer arrives
+	_, first := fx.page.Update(keyRune('c'))
+	fx.page.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, second := fx.page.Update(keyRune('c'))
+
+	fx.page.Update(first())
+	assert.True(t, fx.page.commentsLoading, "the answer of the first load is not the one waited for")
+	assert.Empty(t, fx.page.comments)
+
+	fx.page.Update(second())
+	assert.False(t, fx.page.commentsLoading)
+	assert.Len(t, fx.page.comments, 3)
+}
+
+func TestComments_AnswerAfterClosingChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "Some text")
+	fx.client.CommentsToReturn = testComments()
+	_, load := fx.page.Update(keyRune('c'))
+	fx.page.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	fx.page.Update(load())
+
+	assert.Equal(t, modeView, fx.page.mode)
+	assert.Empty(t, fx.page.comments)
+}
+
+func TestComments_LoadErrorOutlivesAKeyPress(t *testing.T) {
+	t.Parallel()
+
+	fx := newDetailFixture(t, "Some text")
+	fx.client.ErrorToReturn = errors.New("restricted")
+	_, cmd := fx.page.Update(keyRune('c'))
+	fx.drain(t, cmd)
+
+	fx.page.Update(keyRune('j'))
+
+	view := fx.page.View()
+	assert.Contains(t, view, "Could not load comments: restricted")
+	assert.NotContains(t, view, "No open comments", "an error is not an empty list")
+}
+
+func TestComments_SelectionFollowsTheCommentAcrossAReload(t *testing.T) {
+	t.Parallel()
+
+	fx := openComments(t, testComments())
+	fx.page.Update(keyRune('j'))
+	fx.page.Update(keyRune('j')) // Linus, last row
+	require.Contains(t, fx.page.View(), "Linus wrote:")
+
+	// A reply appears in the first thread, above the selected comment
+	before := testComments()
+	withReply := []notion.Comment{before[0], before[1], {ID: "c4", ThreadID: "t1", Author: "Ada", Text: "Thanks", Created: time.Now()}, before[2]}
+	fx.page.Update(commentsLoadedMsg{pageID: "page-1", seq: fx.page.commentsSeq, comments: withReply})
+
+	assert.Contains(t, fx.page.View(), "Linus wrote:")
+}
+
+func TestComments_LongCommentCanBeExpanded(t *testing.T) {
+	t.Parallel()
+
+	var text string
+	for i := 1; i <= 14; i++ {
+		text += fmt.Sprintf("line %d of the comment\n", i)
+	}
+	fx := openComments(t, []notion.Comment{{ID: "c", ThreadID: "t", Author: "Ada", Text: text, Created: time.Now()}})
+
+	view := fx.page.View()
+	assert.Contains(t, view, "line 7 of the comment")
+	assert.NotContains(t, view, "line 9 of the comment")
+	assert.Contains(t, view, "more lines (enter: show more)", "cut text is never cut silently")
+
+	fx.page.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	view = fx.page.View()
+	assert.Contains(t, view, "line 14 of the comment")
+	assert.NotContains(t, view, "more lines")
 }

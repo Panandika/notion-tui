@@ -32,6 +32,7 @@ type MockNotionClient struct {
 	CommentsToReturn         []notion.Comment
 	ListCommentsCalls        int
 	AddCommentCalls          []AddCommentCall
+	AddCommentErr            error // Fails AddComment only
 	GetDatabaseFunc          func(ctx context.Context, id string) (*notionapi.Database, error)
 	SetPagePropertyFunc      func(ctx context.Context, pageID string, update notion.PropertyUpdate) error
 	GetDatabaseCalls         []string

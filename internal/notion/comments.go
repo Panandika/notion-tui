@@ -13,6 +13,10 @@ import (
 // maxComments bounds how many comments of one page are loaded.
 const maxComments = 500
 
+// unknownAuthor stands in for a person whose name Notion would not give,
+// usually because the connection may not read user information.
+const unknownAuthor = "Someone"
+
 // Comment is one open comment on a page.
 type Comment struct {
 	ID string
@@ -72,10 +76,15 @@ func (c *Client) ListComments(ctx context.Context, pageID string) ([]Comment, er
 		cursor = out.NextCursor
 	}
 
+	if len(objects) > maxComments {
+		objects = objects[:maxComments]
+	}
+
 	// Threads in the order their first comment appears; the API already
 	// returns comments oldest first.
 	var threads []string
 	byThread := map[string][]Comment{}
+	unknown := map[string]bool{} // People whose name could not be looked up this time
 	for _, object := range objects {
 		if _, seen := byThread[object.DiscussionID]; !seen {
 			threads = append(threads, object.DiscussionID)
@@ -83,7 +92,7 @@ func (c *Client) ListComments(ctx context.Context, pageID string) ([]Comment, er
 		byThread[object.DiscussionID] = append(byThread[object.DiscussionID], Comment{
 			ID:       object.ID,
 			ThreadID: object.DiscussionID,
-			Author:   c.commentAuthor(ctx, object),
+			Author:   c.commentAuthor(ctx, object, unknown),
 			Text:     object.text(),
 			Created:  object.CreatedTime,
 		})
@@ -95,10 +104,15 @@ func (c *Client) ListComments(ctx context.Context, pageID string) ([]Comment, er
 	return comments, nil
 }
 
+// MaxComments is the most comments ListComments returns for one page.
+const MaxComments = maxComments
+
 // commentAuthor names who wrote a comment. Notion gives the name for
 // comments written through a connection; for people it gives only an ID,
-// which is looked up once and remembered.
-func (c *Client) commentAuthor(ctx context.Context, object commentObject) string {
+// which is looked up once and remembered. A lookup that fails is not
+// remembered beyond this list (unknown), so a passing network error does
+// not hide the name for good.
+func (c *Client) commentAuthor(ctx context.Context, object commentObject, unknown map[string]bool) string {
 	if name := strings.TrimSpace(object.DisplayName.ResolvedName); name != "" {
 		return name
 	}
@@ -113,14 +127,18 @@ func (c *Client) commentAuthor(ctx context.Context, object commentObject) string
 	if known {
 		return name
 	}
+	if unknown[id] {
+		return unknownAuthor
+	}
 
 	var user struct {
 		Name string `json:"name"`
 	}
-	name = "Someone"
 	// A failed lookup must not fail the comment list: the text matters more
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, nil, &user); err == nil && strings.TrimSpace(user.Name) != "" {
-		name = user.Name
+	err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, nil, &user)
+	if name = strings.TrimSpace(user.Name); err != nil || name == "" {
+		unknown[id] = true
+		return unknownAuthor
 	}
 
 	c.userMu.Lock()

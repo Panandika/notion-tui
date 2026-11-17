@@ -162,6 +162,9 @@ type DetailPage struct {
 	// Comments mode
 	comments        []notion.Comment
 	commentsLoading bool
+	commentsSeq     int    // Counts loads, so an older answer is dropped
+	commentsErr     string // Why the list could not be loaded
+	commentExpanded bool   // The selected comment gets most of the screen
 	commentInput    textinput.Model
 	commentThread   string // Thread a reply goes to; empty for a new comment
 	session         *editSession

@@ -171,7 +171,7 @@ Press `t` on any page to list its to-dos and check or uncheck them with Space. E
 
 `c` on a page lists its open comments, replies under the comment they answer, with the selected one shown in full. `a` writes a new comment on the page and `r` replies in the selected comment's thread; both ask for one line of text.
 
-Notion's API only gives open (unresolved) comments on the page itself: resolved comments and comments attached to a piece of text inside the page are not listed, and comments cannot be edited or resolved from here. The connection needs the "Read comments" and "Insert comments" capabilities.
+Notion's API only gives open (unresolved) comments on the page itself: resolved comments and comments attached to a piece of text inside the page are not listed, and comments cannot be edited or resolved from here. The connection needs the "Read comments" and "Insert comments" capabilities, and "Read user information" to show who wrote a comment (without it people appear as "Someone"). `Enter` gives a long comment more room.
 
 ## Creating pages
 
