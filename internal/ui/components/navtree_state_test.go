@@ -42,7 +42,26 @@ func TestNavTree_ReloadKeepsOpenNodesAndSelection(t *testing.T) {
 	assert.Equal(t, []string{"a", "b", "b1", "b2"}, visible(view.Tree()), "the open node stays open and shows its new child")
 	assert.Equal(t, "b1", view.Selected().ID, "the selection stays on the same item")
 
-	// The selected item is gone after a reload: fall back to the top
-	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: results[:1]}))
-	assert.Equal(t, "a", view.Selected().ID)
+	// The selected item is deleted: the selection stays on its row
+	without := append(append([]notion.SearchResult{}, results[:3]...), results[4])
+	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: without}))
+	assert.Equal(t, "b2", view.Selected().ID, "the row that moved up into its place")
+
+	// The selected item moved under a new parent, which starts closed: the
+	// selection goes to that parent. It is on row 1, so neither the top of
+	// the tree nor the old row (2) would give the same answer.
+	moved := []notion.SearchResult{
+		results[0], results[1],
+		{ID: "z", Title: "Azure", ObjectType: "page", ParentType: "workspace"},
+		results[2],
+		{ID: "b2", Title: "Beta second", ObjectType: "page", ParentType: "page_id", ParentID: "z"},
+	}
+	require.Equal(t, 2, view.Tree().SelectedIndex())
+	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: moved}))
+	require.Equal(t, []string{"a", "z", "b"}, visible(view.Tree()))
+	assert.Equal(t, "z", view.Selected().ID)
+
+	// Everything is gone
+	view.SetTree(BuildNavTree(BuildNavTreeInput{}))
+	assert.Nil(t, view.Selected())
 }

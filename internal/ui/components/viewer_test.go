@@ -7,12 +7,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/jomei/notionapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Panandika/notion-tui/internal/config"
-	"github.com/Panandika/notion-tui/internal/testhelpers"
 )
 
 func TestNewPageViewer(t *testing.T) {
@@ -189,88 +187,6 @@ func TestPageViewer_SetSize(t *testing.T) {
 
 			assert.Equal(t, tt.newWidth, pv.width, "width should be updated")
 			assert.Equal(t, tt.newHeight, pv.height, "height should be updated")
-		})
-	}
-}
-
-func TestPageViewer_SetBlocks(t *testing.T) {
-	t.Parallel()
-
-	// Reset test ID counter for deterministic test results
-	testhelpers.ResetTestIDCounter()
-
-	tests := []struct {
-		name       string
-		blocks     []notionapi.Block
-		wantLoaded bool
-	}{
-		{
-			name: "single paragraph",
-			blocks: []notionapi.Block{
-				testhelpers.NewParagraphBlock("This is a test paragraph."),
-			},
-			wantLoaded: true,
-		},
-		{
-			name: "multiple block types",
-			blocks: []notionapi.Block{
-				testhelpers.NewHeading1Block("Main Heading"),
-				testhelpers.NewParagraphBlock("Introduction paragraph."),
-				testhelpers.NewHeading2Block("Sub Heading"),
-				testhelpers.NewBulletedListItemBlock("First item"),
-				testhelpers.NewBulletedListItemBlock("Second item"),
-			},
-			wantLoaded: true,
-		},
-		{
-			name: "code block",
-			blocks: []notionapi.Block{
-				testhelpers.NewCodeBlock("go", "fmt.Println(\"Hello\")"),
-			},
-			wantLoaded: true,
-		},
-		{
-			name: "quote and callout",
-			blocks: []notionapi.Block{
-				testhelpers.NewQuoteBlock("This is a quote."),
-				testhelpers.NewCalloutBlock("💡", "This is a callout."),
-			},
-			wantLoaded: true,
-		},
-		{
-			name:       "empty blocks",
-			blocks:     []notionapi.Block{},
-			wantLoaded: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			pv := NewPageViewer(NewPageViewerInput{Width: 80, Height: 24})
-
-			// Execute the command returned by SetBlocks
-			cmd := pv.SetBlocks(tt.blocks)
-			require.NotNil(t, cmd, "SetBlocks should return a command")
-
-			// Execute the command to get the message
-			msg := cmd()
-
-			// The message should be either ContentLoadedMsg or ErrorMsg
-			switch msg := msg.(type) {
-			case ContentLoadedMsg:
-				assert.Nil(t, msg.Err(), "should not have error")
-				if tt.wantLoaded {
-					assert.NotEmpty(t, msg.Content(), "should have content")
-				}
-
-			case ErrorMsg:
-				t.Errorf("unexpected error message: %v", msg)
-
-			default:
-				t.Errorf("unexpected message type: %T", msg)
-			}
 		})
 	}
 }
@@ -543,28 +459,17 @@ func TestPageViewer_GettersAndSetters(t *testing.T) {
 func TestPageViewer_Integration(t *testing.T) {
 	t.Parallel()
 
-	// Reset test ID counter for deterministic test results
-	testhelpers.ResetTestIDCounter()
-
 	// Create a viewer
 	pv := NewPageViewer(NewPageViewerInput{Width: 80, Height: 24})
 
 	// Set page ID
 	pv.SetPageID("integration-test-page")
 
-	// Create test blocks
-	blocks := []notionapi.Block{
-		testhelpers.NewHeading1Block("Integration Test"),
-		testhelpers.NewParagraphBlock("This is an integration test."),
-		testhelpers.NewBulletedListItemBlock("Item 1"),
-		testhelpers.NewBulletedListItemBlock("Item 2"),
-		testhelpers.NewCodeBlock("go", `func main() {
-	fmt.Println("Hello")
-}`),
-	}
+	markdown := "# Integration Test\n\nThis is an integration test.\n\n- Item 1\n- Item 2\n\n" +
+		"```go\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n```\n"
 
-	// Load blocks
-	cmd := pv.SetBlocks(blocks)
+	// Load Markdown
+	cmd := pv.SetMarkdown(markdown)
 	require.NotNil(t, cmd, "should return command")
 
 	// Execute command

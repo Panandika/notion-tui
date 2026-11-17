@@ -22,12 +22,7 @@ import (
 type MockNotionClient struct {
 	QueryDatabaseFunc func(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error)
 	GetPageFunc       func(ctx context.Context, id string) (*notionapi.Page, error)
-	GetBlocksFunc     func(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error)
-	GetBlockFunc      func(ctx context.Context, id string) (notionapi.Block, error)
 	UpdatePageFunc    func(ctx context.Context, id string, req *notionapi.PageUpdateRequest) (*notionapi.Page, error)
-	UpdateBlockFunc   func(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error)
-	AppendBlocksFunc  func(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
-	DeleteBlockFunc   func(ctx context.Context, id string) (notionapi.Block, error)
 	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 
 	CreatePageMarkdownFunc func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
@@ -47,44 +42,9 @@ func (m *MockNotionClient) GetPage(ctx context.Context, id string) (*notionapi.P
 	return nil, errors.New("not implemented")
 }
 
-func (m *MockNotionClient) GetBlocks(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error) {
-	if m.GetBlocksFunc != nil {
-		return m.GetBlocksFunc(ctx, id, pagination)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockNotionClient) GetBlock(ctx context.Context, id string) (notionapi.Block, error) {
-	if m.GetBlockFunc != nil {
-		return m.GetBlockFunc(ctx, id)
-	}
-	return nil, errors.New("not implemented")
-}
-
 func (m *MockNotionClient) UpdatePage(ctx context.Context, id string, req *notionapi.PageUpdateRequest) (*notionapi.Page, error) {
 	if m.UpdatePageFunc != nil {
 		return m.UpdatePageFunc(ctx, id, req)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockNotionClient) UpdateBlock(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error) {
-	if m.UpdateBlockFunc != nil {
-		return m.UpdateBlockFunc(ctx, id, req)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockNotionClient) AppendBlocks(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error) {
-	if m.AppendBlocksFunc != nil {
-		return m.AppendBlocksFunc(ctx, id, req)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockNotionClient) DeleteBlock(ctx context.Context, id string) (notionapi.Block, error) {
-	if m.DeleteBlockFunc != nil {
-		return m.DeleteBlockFunc(ctx, id)
 	}
 	return nil, errors.New("not implemented")
 }

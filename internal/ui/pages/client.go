@@ -25,13 +25,6 @@ type NotionClient interface {
 	GetDatabase(ctx context.Context, id string) (*notionapi.Database, error)
 	SetPageProperty(ctx context.Context, pageID string, update notion.PropertyUpdate) error
 
-	// Block operations
-	GetBlocks(ctx context.Context, id string, pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error)
-	AppendBlocks(ctx context.Context, id string, req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error)
-	DeleteBlock(ctx context.Context, id string) (notionapi.Block, error)
-	GetBlock(ctx context.Context, id string) (notionapi.Block, error)
-	UpdateBlock(ctx context.Context, id string, req *notionapi.BlockUpdateRequest) (notionapi.Block, error)
-
 	// Database operations
 	QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error)
 

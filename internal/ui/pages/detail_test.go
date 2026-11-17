@@ -24,7 +24,6 @@ import (
 // mockViewer implements ViewerInterface for testing.
 type mockViewer struct {
 	markdown     string
-	blocks       []notionapi.Block
 	width        int
 	height       int
 	updateCalled int
@@ -54,11 +53,6 @@ func (m *mockViewer) View() string {
 		return "No content"
 	}
 	return "Viewer: " + m.markdown
-}
-
-func (m *mockViewer) SetBlocks(blocks []notionapi.Block) tea.Cmd {
-	m.blocks = blocks
-	return nil
 }
 
 func (m *mockViewer) SetMarkdown(markdown string) tea.Cmd {
@@ -184,7 +178,6 @@ func TestDetailPage_LoadsPageAsMarkdown(t *testing.T) {
 	assert.Equal(t, "Hello <b>world</b>", fx.page.Markdown(), "source markdown is kept as Notion returned it")
 	assert.Equal(t, "# My Page\n\n---\n\nHello **world**", fx.viewer.markdown, "viewer gets the title, then terminal markdown")
 	assert.Equal(t, "My Page", fx.page.Title())
-	assert.Equal(t, 0, fx.client.GetBlocksCallCount(), "nested blocks must not be fetched one by one")
 	assert.True(t, fx.viewer.initCalled)
 }
 

@@ -343,12 +343,6 @@ func TestClient_ReadOnlyRefusesEveryChange(t *testing.T) {
 	assert.ErrorIs(t, client.SetPageProperty(ctx, "p", CheckboxUpdate("Done", true)), ErrReadOnly)
 	_, err = client.UpdatePage(ctx, "p", &notionapi.PageUpdateRequest{Archived: true})
 	assert.ErrorIs(t, err, ErrReadOnly)
-	_, err = client.AppendBlocks(ctx, "p", &notionapi.AppendBlockChildrenRequest{})
-	assert.ErrorIs(t, err, ErrReadOnly)
-	_, err = client.DeleteBlock(ctx, "b")
-	assert.ErrorIs(t, err, ErrReadOnly)
-	_, err = client.UpdateBlock(ctx, "b", &notionapi.BlockUpdateRequest{})
-	assert.ErrorIs(t, err, ErrReadOnly)
 	assert.Empty(t, *requests, "nothing reached Notion")
 
 	_, err = client.GetPageMarkdown(ctx, "p")

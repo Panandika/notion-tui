@@ -414,6 +414,15 @@ func titledBlockLine(kind, title string) string {
 	return fmt.Sprintf("📄 **%s**", title)
 }
 
+// titleOrUntitled returns a placeholder for empty titles, which would
+// otherwise leave bare emphasis markers in the output.
+func titleOrUntitled(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "Untitled"
+	}
+	return title
+}
+
 func unsupportedNotice(kind string) string {
 	if kind == "" {
 		return "*[unsupported block]*"

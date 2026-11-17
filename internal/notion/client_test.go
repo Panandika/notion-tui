@@ -134,51 +134,6 @@ func TestQueryDatabase(t *testing.T) {
 	}
 }
 
-// TestGetBlocks tests block retrieval with rate limiting.
-func TestGetBlocks(t *testing.T) {
-	tests := []struct {
-		name    string
-		id      string
-		timeout time.Duration
-		wantErr bool
-	}{
-		{
-			name:    "valid block ID",
-			id:      "block-789",
-			timeout: time.Second,
-			wantErr: false,
-		},
-		{
-			name:    "context canceled",
-			id:      "block-789",
-			timeout: 0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient("secret_test_token")
-
-			ctx := context.Background()
-			if tt.timeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, tt.timeout)
-				defer cancel()
-			} else {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-
-			if tt.wantErr {
-				_, err := client.GetBlocks(ctx, tt.id, nil)
-				assert.Error(t, err)
-			}
-		})
-	}
-}
-
 // TestUpdatePage tests page update with rate limiting.
 func TestUpdatePage(t *testing.T) {
 	tests := []struct {
@@ -225,51 +180,6 @@ func TestUpdatePage(t *testing.T) {
 	}
 }
 
-// TestDeleteBlock tests block deletion with rate limiting.
-func TestDeleteBlock(t *testing.T) {
-	tests := []struct {
-		name    string
-		id      string
-		timeout time.Duration
-		wantErr bool
-	}{
-		{
-			name:    "valid block ID",
-			id:      "block-delete",
-			timeout: time.Second,
-			wantErr: false,
-		},
-		{
-			name:    "context canceled",
-			id:      "block-delete",
-			timeout: 0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient("secret_test_token")
-
-			ctx := context.Background()
-			if tt.timeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, tt.timeout)
-				defer cancel()
-			} else {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-
-			if tt.wantErr {
-				_, err := client.DeleteBlock(ctx, tt.id)
-				assert.Error(t, err)
-			}
-		})
-	}
-}
-
 // TestRateLimiterWait tests that Wait correctly respects context cancellation.
 func TestRateLimiterWait(t *testing.T) {
 	client := NewClient("secret_test_token")
@@ -303,55 +213,6 @@ func TestRateLimiterWait(t *testing.T) {
 	})
 }
 
-// TestAppendBlocks tests block append with rate limiting.
-func TestAppendBlocks(t *testing.T) {
-	tests := []struct {
-		name    string
-		id      string
-		timeout time.Duration
-		wantErr bool
-	}{
-		{
-			name:    "valid block ID",
-			id:      "block-append",
-			timeout: time.Second,
-			wantErr: false,
-		},
-		{
-			name:    "context canceled",
-			id:      "block-append",
-			timeout: 0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient("secret_test_token")
-
-			ctx := context.Background()
-			if tt.timeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, tt.timeout)
-				defer cancel()
-			} else {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-
-			req := &notionapi.AppendBlockChildrenRequest{
-				Children: []notionapi.Block{},
-			}
-
-			if tt.wantErr {
-				_, err := client.AppendBlocks(ctx, tt.id, req)
-				assert.Error(t, err)
-			}
-		})
-	}
-}
-
 // TestErrorWrapping tests that errors are properly wrapped with context.
 func TestErrorWrapping(t *testing.T) {
 	client := NewClient("secret_test_token")
@@ -380,25 +241,9 @@ func TestErrorWrapping(t *testing.T) {
 			expectedText: "rate limiter wait",
 		},
 		{
-			name: "GetBlocks error contains context",
-			testFunc: func() error {
-				_, err := client.GetBlocks(ctx, "test-id", nil)
-				return err
-			},
-			expectedText: "rate limiter wait",
-		},
-		{
 			name: "UpdatePage error contains context",
 			testFunc: func() error {
 				_, err := client.UpdatePage(ctx, "test-id", &notionapi.PageUpdateRequest{})
-				return err
-			},
-			expectedText: "rate limiter wait",
-		},
-		{
-			name: "DeleteBlock error contains context",
-			testFunc: func() error {
-				_, err := client.DeleteBlock(ctx, "test-id")
 				return err
 			},
 			expectedText: "rate limiter wait",
