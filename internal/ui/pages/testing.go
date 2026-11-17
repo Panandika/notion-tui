@@ -15,6 +15,9 @@ func NewLoadedMsgForTest(pageID, markdown string) tea.Msg {
 // NewRowsLoadedMsgForTest builds the message a ListPage receives when its
 // rows have loaded. Not for use outside tests, for the same reason as
 // NewLoadedMsgForTest.
-func NewRowsLoadedMsgForTest(rows ...Page) tea.Msg {
-	return pagesLoadedMsg{pages: rows}
+//
+// The message answers the list's latest load, as a real result would;
+// results of earlier loads are dropped by the page.
+func NewRowsLoadedMsgForTest(list *ListPage, rows ...Page) tea.Msg {
+	return pagesLoadedMsg{epoch: list.epoch, pages: rows}
 }

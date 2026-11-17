@@ -1307,7 +1307,7 @@ func TestListPage_LateLoadMoreOfAnOlderListIsDropped(t *testing.T) {
 	_, more := lp.Update(listKey('m'))
 	require.NotNil(t, more)
 	lp.Refresh()
-	lp.Update(pagesLoadedMsg{pages: []Page{{ID: "r1", Title: "one"}, {ID: "r2", Title: "two"}}})
+	lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{{ID: "r1", Title: "one"}, {ID: "r2", Title: "two"}}})
 
 	lp.Update(pagesLoadedMsg{more: true, epoch: 0, pages: []Page{{ID: "old", Title: "from the old list"}}})
 
@@ -1435,6 +1435,7 @@ func TestListPage_PropertyFilter(t *testing.T) {
 
 		require.Len(t, queries, 3)
 		assert.Equal(t, notionapi.Cursor("next"), queries[1].StartCursor)
+		assert.Empty(t, queries[2].StartCursor, "a reload starts from the first page")
 		for i, query := range queries {
 			assert.NotNil(t, query.Filter, "query %d", i)
 		}
@@ -1501,7 +1502,7 @@ func TestListPage_PropertyFilter(t *testing.T) {
 		feed(lp, cmd)
 
 		assert.False(t, lp.InMode())
-		assert.Contains(t, lp.View(), "no status, select, checkbox or date property")
+		assert.Contains(t, lp.View(), "No status, select, checkbox or date property to filter by")
 	})
 
 	t.Run("a failed load of the properties is reported", func(t *testing.T) {
@@ -1513,5 +1514,94 @@ func TestListPage_PropertyFilter(t *testing.T) {
 
 		assert.False(t, lp.InMode())
 		assert.Contains(t, lp.View(), "Could not load the properties")
+	})
+}
+
+func TestListPage_RowsOfAnOlderLoadNeverReplaceNewerOnes(t *testing.T) {
+	t.Parallel()
+
+	var queries []*notionapi.DatabaseQueryRequest
+	lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+
+	// A filter is chosen; before its rows arrive it is cleared again
+	_, schema := lp.Update(listKey('p'))
+	feed(lp, schema)
+	lp.Update(listEnter())
+	_, filtered := lp.Update(listEnter())
+	require.True(t, lp.Filter().Active())
+
+	_, cmd := lp.Update(listKey('P'))
+	assert.Nil(t, cmd, "not while the filtered rows are still loading")
+
+	// The same race through a reload: the filtered answer arrives last
+	lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{{ID: "done", Title: "Done row"}}})
+	_, all := lp.Update(listKey('P'))
+	feed(lp, all)
+	feed(lp, filtered)
+
+	assert.False(t, lp.Filter().Active())
+	assert.Empty(t, lp.pageList, "the unfiltered (empty) answer stands; the stale filtered one is dropped")
+}
+
+func TestListPage_FilterPickerWithOtherThingsGoingOn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an answer that comes after esc opens nothing", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+
+		_, schema := lp.Update(listKey('p'))
+		require.True(t, lp.InMode(), "waiting for the properties")
+		lp.Update(listEsc())
+		feed(lp, schema)
+
+		assert.False(t, lp.InMode())
+		assert.NotContains(t, lp.View(), "Show only rows where")
+	})
+
+	t.Run("the picker stays visible and labelled when a reload fails under it", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		_, schema := lp.Update(listKey('p'))
+		feed(lp, schema)
+
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, err: errors.New("network down")})
+
+		view := lp.View()
+		assert.Contains(t, view, "Show only rows where", "the thing taking the keys is the thing shown")
+		assert.Contains(t, view, "enter: choose", "and its hints were not replaced")
+	})
+
+	t.Run("no key of the row list works under the picker", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		_, schema := lp.Update(listKey('p'))
+		feed(lp, schema)
+
+		for _, key := range "nsrmpP/" {
+			_, cmd := lp.Update(listKey(key))
+			assert.Nil(t, cmd, "%c", key)
+		}
+		assert.Contains(t, lp.View(), "Show only rows where")
+		assert.Empty(t, queries)
+	})
+
+	t.Run("a failed load names the filter and how to drop it", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		_, schema := lp.Update(listKey('p'))
+		feed(lp, schema)
+		lp.Update(listEnter())
+		lp.Update(listEnter())
+
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, err: errors.New("validation_error")})
+
+		view := lp.View()
+		assert.Contains(t, view, "Rows are limited to: Status is Todo")
+		assert.Contains(t, view, "Press P to show all rows")
 	})
 }

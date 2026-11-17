@@ -184,8 +184,8 @@ cache_dir: "~/.cache/notion-tui"
 # row_filter      /         database rows
 # row_reload      r         database rows
 # row_more        m         database rows
-# row_property_filter  p    database rows
-# row_clear_filter     P    database rows
+# row_property_filter p     database rows
+# row_clear_filter P        database rows
 # tree_reload     r         sidebar
 #
 # keys:

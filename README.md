@@ -126,7 +126,7 @@ Press `?` in the app for the full key reference.
 | `m` | Load more rows |
 | `r` | Reload |
 
-`p` lists the database's status, select, multi-select, checkbox and date properties; pick one, then a condition (`is Done`, `is checked`, `is before today`, `is in the next 7 days`, `is empty`, ...). Notion does the filtering, so rows that are not loaded yet are covered too, and loading more or reloading keeps the filter. The status bar names the filter while it is on.
+`p` lists the database's status, select, multi-select, checkbox and date properties; pick one, then a condition (`is Done`, `is checked`, `is before today`, `is in the next 7 days` (today included), `is empty`, ...). Notion does the filtering, so rows that are not loaded yet are covered too, and loading more or reloading keeps the filter. The heading above the rows and the status bar name the filter while it is on.
 
 ### Command palette
 `Ctrl+P` opens it; move with `j` / `k`, filter with `/`, run with `Enter`. Commands: Search Workspace, Switch Database, Refresh, New Page, Export Page, Help, Quit.

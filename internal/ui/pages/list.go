@@ -61,7 +61,7 @@ type pagesLoadedMsg struct {
 	nextCursor string
 	err        error
 	// more marks the next page of an earlier result ("load more") rather
-	// than a fresh first page. epoch is the reload it continues.
+	// than a fresh first page. epoch is the reload the rows belong to.
 	more  bool
 	epoch int
 }
@@ -222,8 +222,9 @@ func (lp *ListPage) Init() tea.Cmd {
 func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pagesLoadedMsg:
-		// A next page that belongs to a list reloaded since is out of date
-		if msg.more && msg.epoch != lp.epoch {
+		// Rows of a list that was reloaded since (another filter, a
+		// refresh) are out of date, whichever answer arrives last
+		if msg.epoch != lp.epoch {
 			return lp, nil
 		}
 		if msg.err != nil {
@@ -231,7 +232,11 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			lp.loadingMore = false
 			lp.err = msg.err
 			lp.statusBar.SetSyncStatus(components.StatusError)
-			lp.statusBar.SetHelpText(fmt.Sprintf("Error: %v", msg.err))
+			if lp.filterStage == filterOff {
+				// An open picker keeps its own hints; the error is on
+				// screen as soon as it closes
+				lp.statusBar.SetHelpText(fmt.Sprintf("Error: %v", msg.err))
+			}
 			return lp, nil
 		}
 
@@ -276,7 +281,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil:
 			lp.notice = "Could not load the properties: " + msg.err.Error()
 		case len(msg.properties) == 0:
-			lp.notice = "This database has no status, select, checkbox or date property to filter by"
+			lp.notice = "No status, select, checkbox or date property to filter by"
 		default:
 			lp.filterChoices = msg.properties
 			lp.openPropertyPicker()
@@ -318,7 +323,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return lp, lp.startPropertyFilter()
 
 		case "P":
-			if lp.filter.Active() {
+			if lp.filter.Active() && !lp.loading {
 				return lp, lp.applyFilter(notion.RowFilter{})
 			}
 			return lp, nil
@@ -378,6 +383,11 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the list page.
 func (lp *ListPage) View() string {
+	// An open picker takes every key, so it must always be the thing shown
+	if lp.filterStage == filterProperty || lp.filterStage == filterCondition {
+		return lipgloss.JoinVertical(lipgloss.Left, lp.picker.View(lp.width, lp.height-1), lp.statusBar.View())
+	}
+
 	if lp.loading {
 		loadingStyle := lipgloss.NewStyle().
 			Width(lp.width).
@@ -402,17 +412,19 @@ func (lp *ListPage) View() string {
 			Align(lipgloss.Center, lipgloss.Center).
 			Foreground(lipgloss.Color("#EF4444"))
 
-		main := errorStyle.Render(fmt.Sprintf("Error loading pages:\n%v", lp.err))
+		text := fmt.Sprintf("Error loading pages:\n%v", lp.err)
+		if lp.filter.Active() {
+			// The filter may be the cause (an option renamed since)
+			text += fmt.Sprintf("\n\nRows are limited to: %s.", lp.filter.Label) +
+				lp.keys.Label(" Press {row_clear_filter} to show all rows")
+		}
+		main := errorStyle.Render(text)
 		status := lp.statusBar.View()
 
 		return lipgloss.JoinVertical(lipgloss.Left, main, status)
 	}
 
 	status := lp.statusBar.View()
-
-	if lp.filterStage == filterProperty || lp.filterStage == filterCondition {
-		return lipgloss.JoinVertical(lipgloss.Left, lp.picker.View(lp.width, lp.height-1), status)
-	}
 
 	if len(lp.pageList) == 0 && lp.filter.Active() {
 		emptyStyle := lipgloss.NewStyle().
@@ -550,13 +562,13 @@ func (lp *ListPage) startPropertyFilter() tea.Cmd {
 	lp.filterStage = filterLoading
 	lp.statusBar.SetHelpText("Loading properties... | esc: cancel")
 
-	client, databaseID, now := lp.notionClient, lp.databaseID, lp.now
+	client, databaseID := lp.notionClient, lp.databaseID
 	return func() tea.Msg {
 		database, err := client.GetDatabase(context.Background(), databaseID)
 		if err != nil {
 			return filterSchemaMsg{databaseID: databaseID, err: err}
 		}
-		return filterSchemaMsg{databaseID: databaseID, properties: notion.FilterProperties(database, now())}
+		return filterSchemaMsg{databaseID: databaseID, properties: notion.FilterProperties(database)}
 	}
 }
 
@@ -623,6 +635,12 @@ func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
 // value.
 func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	lp.filter = filter
+	// The heading says it too: the status bar drops its text when narrow
+	title := "Pages"
+	if filter.Active() {
+		title = "Pages where " + filter.Label
+	}
+	lp.sidebar.SetTitle(title)
 	lp.loading = true
 	lp.hasMore = false
 	lp.statusBar.SetSyncStatus(components.StatusSyncing)
@@ -662,20 +680,22 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	lp.epoch++
 	lp.loadingMore = false
 	lp.nextCursor = ""
-	filter := lp.filter
+	filter, epoch, now := lp.filter, lp.epoch, lp.now
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		if lp.notionClient == nil {
 			return pagesLoadedMsg{
-				err: fmt.Errorf("notion client not initialized"),
+				epoch: epoch,
+				err:   fmt.Errorf("notion client not initialized"),
 			}
 		}
 
-		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, filter.Query(""))
+		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, filter.Query("", now()))
 		if err != nil {
 			return pagesLoadedMsg{
-				err: fmt.Errorf("fetch pages: %w", err),
+				epoch: epoch,
+				err:   fmt.Errorf("fetch pages: %w", err),
 			}
 		}
 
@@ -685,6 +705,7 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 		}
 
 		return pagesLoadedMsg{
+			epoch:      epoch,
 			pages:      pages,
 			hasMore:    resp.HasMore,
 			nextCursor: string(resp.NextCursor),
@@ -696,13 +717,15 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 func (lp *ListPage) loadMoreCmd() tea.Cmd {
 	epoch := lp.epoch
 	cursor := lp.nextCursor
-	filter := lp.filter
+	filter, now := lp.filter, lp.now
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		if lp.notionClient == nil {
 			return pagesLoadedMsg{
-				err: fmt.Errorf("notion client not initialized"),
+				more:  true,
+				epoch: epoch,
+				err:   fmt.Errorf("notion client not initialized"),
 			}
 		}
 
@@ -715,7 +738,7 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 		}
 
 		// The next page of the same, possibly filtered, list
-		req := filter.Query(cursor)
+		req := filter.Query(cursor, now())
 
 		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, req)
 		if err != nil {
@@ -910,8 +933,8 @@ func (lp *ListPage) IsLoadingMore() bool {
 // updateStatusBarFromSidebar updates the status bar based on sidebar search state.
 func (lp *ListPage) updateStatusBarFromSidebar() {
 	switch {
-	case lp.prompting || lp.creating:
-		// The prompt and the create action set their own text.
+	case lp.prompting || lp.creating || lp.filterStage != filterOff:
+		// The prompt, the create action and the pickers set their own text.
 	case lp.sidebar.IsFiltering():
 		filter := lp.sidebar.FilterValue()
 		visible := lp.sidebar.VisibleItemCount()

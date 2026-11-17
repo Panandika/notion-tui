@@ -29,10 +29,12 @@ func filterTestDatabase() *notionapi.Database {
 	}}
 }
 
+var filterTestNow = time.Date(2026, 11, 17, 15, 30, 0, 0, time.FixedZone("WITA", 8*3600))
+
 // requestJSON is what Notion would receive for the first page of rows.
 func requestJSON(t *testing.T, filter RowFilter) string {
 	t.Helper()
-	raw, err := json.Marshal(filter.Query(""))
+	raw, err := json.Marshal(filter.Query("", filterTestNow))
 	require.NoError(t, err)
 	return string(raw)
 }
@@ -53,8 +55,7 @@ func findChoice(t *testing.T, properties []FilterProperty, label string) RowFilt
 func TestFilterProperties(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 11, 17, 15, 30, 0, 0, time.FixedZone("WITA", 8*3600))
-	properties := FilterProperties(filterTestDatabase(), now)
+	properties := FilterProperties(filterTestDatabase())
 
 	var names []string
 	for _, property := range properties {
@@ -96,8 +97,8 @@ func TestFilterProperties(t *testing.T) {
 func TestFilterProperties_NothingToFilterBy(t *testing.T) {
 	t.Parallel()
 
-	assert.Empty(t, FilterProperties(nil, time.Now()))
-	assert.Empty(t, FilterProperties(&notionapi.Database{Properties: notionapi.PropertyConfigs{"Name": &notionapi.TitlePropertyConfig{}}}, time.Now()))
+	assert.Empty(t, FilterProperties(nil))
+	assert.Empty(t, FilterProperties(&notionapi.Database{Properties: notionapi.PropertyConfigs{"Name": &notionapi.TitlePropertyConfig{}}}))
 }
 
 func TestRowFilter_Query(t *testing.T) {
@@ -105,12 +106,39 @@ func TestRowFilter_Query(t *testing.T) {
 
 	var none RowFilter
 	assert.False(t, none.Active())
-	assert.Nil(t, none.Query(""), "no filter and no cursor: the plain first page")
-	assert.Equal(t, notionapi.Cursor("c1"), none.Query("c1").StartCursor)
+	assert.Nil(t, none.Query("", filterTestNow), "no filter and no cursor: the plain first page")
+	assert.Equal(t, notionapi.Cursor("c1"), none.Query("c1", filterTestNow).StartCursor)
 
-	done := findChoice(t, FilterProperties(filterTestDatabase(), time.Now()), "Status is Done")
+	done := findChoice(t, FilterProperties(filterTestDatabase()), "Status is Done")
 	assert.True(t, done.Active())
-	next := done.Query("c2")
+	next := done.Query("c2", filterTestNow)
 	assert.Equal(t, notionapi.Cursor("c2"), next.StartCursor)
 	assert.NotNil(t, next.Filter, "the next page keeps the filter")
+}
+
+func TestRowFilter_TodayFollowsTheClock(t *testing.T) {
+	t.Parallel()
+
+	today := findChoice(t, FilterProperties(filterTestDatabase()), "Due is today")
+
+	nextDay := filterTestNow.AddDate(0, 0, 1)
+	raw, err := json.Marshal(today.Query("", nextDay))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"filter":{"and":[{"property":"Due","date":{"on_or_after":"2026-11-18T00:00:00+08:00"}},{"property":"Due","date":{"before":"2026-11-19T00:00:00+08:00"}}]}}`,
+		string(raw), "a filter chosen yesterday asks for today's rows")
+}
+
+func TestRowFilter_DayBoundariesAcrossAClockChange(t *testing.T) {
+	t.Parallel()
+
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	require.NoError(t, err)
+	// Clocks go back on 2026-10-25: that day is 25 hours long
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, berlin)
+	week := findChoice(t, FilterProperties(filterTestDatabase()), "Due is in the next 7 days")
+
+	raw, err := json.Marshal(week.Query("", now))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"filter":{"and":[{"property":"Due","date":{"on_or_after":"2026-10-24T00:00:00+02:00"}},{"property":"Due","date":{"before":"2026-10-31T00:00:00+01:00"}}]}}`,
+		string(raw), "both ends are midnights, each with the offset of its own day")
 }

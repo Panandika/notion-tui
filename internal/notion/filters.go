@@ -15,22 +15,34 @@ type RowFilter struct {
 	// Choice is the condition without the property name: "is Done".
 	Choice string
 
-	filter notionapi.Filter
+	// build makes the condition Notion receives. It is given the time of
+	// the request, so "today" is right even if the app ran past midnight.
+	build func(now time.Time) notionapi.Filter
 }
 
 // Active reports whether the filter limits anything.
 func (f RowFilter) Active() bool {
-	return f.filter != nil
+	return f.build != nil
 }
 
 // Query builds the request for one page of rows, starting after cursor
 // ("" for the first page). Notion applies the filter, so it also covers
-// rows that have not been loaded yet.
-func (f RowFilter) Query(cursor string) *notionapi.DatabaseQueryRequest {
-	if f.filter == nil && cursor == "" {
+// rows that have not been loaded yet. now decides what "today" means for
+// date conditions.
+func (f RowFilter) Query(cursor string, now time.Time) *notionapi.DatabaseQueryRequest {
+	if f.build == nil && cursor == "" {
 		return nil
 	}
-	return &notionapi.DatabaseQueryRequest{Filter: f.filter, StartCursor: notionapi.Cursor(cursor)}
+	request := &notionapi.DatabaseQueryRequest{StartCursor: notionapi.Cursor(cursor)}
+	if f.build != nil {
+		request.Filter = f.build(now)
+	}
+	return request
+}
+
+// always wraps a condition that does not depend on the date.
+func always(filter notionapi.Filter) func(time.Time) notionapi.Filter {
+	return func(time.Time) notionapi.Filter { return filter }
 }
 
 // FilterProperty is a property rows can be filtered by, with the
@@ -42,10 +54,9 @@ type FilterProperty struct {
 }
 
 // FilterProperties lists what the rows of a database can be filtered by:
-// status, select, multi-select, checkbox and date properties, in that
-// order and by name within a type. now decides what "today" means for
-// dates.
-func FilterProperties(database *notionapi.Database, now time.Time) []FilterProperty {
+// status, select, date, checkbox and multi-select properties, in that
+// order and by name within a type.
+func FilterProperties(database *notionapi.Database) []FilterProperty {
 	if database == nil {
 		return nil
 	}
@@ -54,7 +65,7 @@ func FilterProperties(database *notionapi.Database, now time.Time) []FilterPrope
 		property := FilterProperty{Name: name}
 		add := func(choice string, filter notionapi.PropertyFilter) {
 			filter.Property = name
-			property.Choices = append(property.Choices, RowFilter{Label: name + " " + choice, Choice: choice, filter: filter})
+			property.Choices = append(property.Choices, RowFilter{Label: name + " " + choice, Choice: choice, build: always(filter)})
 		}
 
 		switch config := config.(type) {
@@ -88,7 +99,7 @@ func FilterProperties(database *notionapi.Database, now time.Time) []FilterPrope
 
 		case *notionapi.DatePropertyConfig:
 			property.Type = notionapi.PropertyTypeDate
-			property.Choices = dateChoices(name, now)
+			property.Choices = dateChoices(name)
 
 		default:
 			continue
@@ -106,30 +117,38 @@ func FilterProperties(database *notionapi.Database, now time.Time) []FilterPrope
 }
 
 // dateChoices offers the date conditions people ask for most. Days start
-// and end in the time zone of now.
-func dateChoices(name string, now time.Time) []RowFilter {
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	day := func(offset int) *notionapi.Date {
-		date := notionapi.Date(today.AddDate(0, 0, offset))
+// and end at midnight in the time zone of the request.
+func dateChoices(name string) []RowFilter {
+	// day returns midnight offset days from now's date. Each boundary is
+	// built from the calendar date, so a day without a midnight (a clock
+	// change) shifts only itself.
+	day := func(now time.Time, offset int) *notionapi.Date {
+		date := notionapi.Date(time.Date(now.Year(), now.Month(), now.Day()+offset, 0, 0, 0, 0, now.Location()))
 		return &date
 	}
-	condition := func(c notionapi.DateFilterCondition) notionapi.PropertyFilter {
+	condition := func(c notionapi.DateFilterCondition) notionapi.Filter {
 		return notionapi.PropertyFilter{Property: name, Date: &c}
 	}
-	between := func(from, before int) notionapi.Filter {
-		return notionapi.AndCompoundFilter{
-			condition(notionapi.DateFilterCondition{OnOrAfter: day(from)}),
-			condition(notionapi.DateFilterCondition{Before: day(before)}),
+	between := func(from, before int) func(time.Time) notionapi.Filter {
+		return func(now time.Time) notionapi.Filter {
+			return notionapi.AndCompoundFilter{
+				condition(notionapi.DateFilterCondition{OnOrAfter: day(now, from)}),
+				condition(notionapi.DateFilterCondition{Before: day(now, before)}),
+			}
 		}
 	}
 
 	choices := []RowFilter{
-		{Choice: "is before today", filter: condition(notionapi.DateFilterCondition{Before: day(0)})},
-		{Choice: "is today", filter: between(0, 1)},
-		{Choice: "is in the next 7 days", filter: between(0, 7)},
-		{Choice: "is after today", filter: condition(notionapi.DateFilterCondition{OnOrAfter: day(1)})},
-		{Choice: "is set", filter: condition(notionapi.DateFilterCondition{IsNotEmpty: true})},
-		{Choice: "is empty", filter: condition(notionapi.DateFilterCondition{IsEmpty: true})},
+		{Choice: "is before today", build: func(now time.Time) notionapi.Filter {
+			return condition(notionapi.DateFilterCondition{Before: day(now, 0)})
+		}},
+		{Choice: "is today", build: between(0, 1)},
+		{Choice: "is in the next 7 days", build: between(0, 7)}, // Today and the six days after
+		{Choice: "is after today", build: func(now time.Time) notionapi.Filter {
+			return condition(notionapi.DateFilterCondition{OnOrAfter: day(now, 1)})
+		}},
+		{Choice: "is set", build: always(condition(notionapi.DateFilterCondition{IsNotEmpty: true}))},
+		{Choice: "is empty", build: always(condition(notionapi.DateFilterCondition{IsEmpty: true}))},
 	}
 	for i := range choices {
 		choices[i].Label = name + " " + choices[i].Choice
