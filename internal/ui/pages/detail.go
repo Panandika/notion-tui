@@ -2,7 +2,6 @@ package pages
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -55,6 +54,13 @@ type pageLoadedMsg struct {
 	markdown  string
 	truncated bool
 	err       error
+	// offline marks a copy saved earlier, shown because Notion could not
+	// be reached; age is how long ago it was saved. There is no page
+	// object then, only the title and header saved with the content.
+	offline bool
+	age     time.Duration
+	title   string
+	header  string
 }
 
 // editSourceMsg carries the page's current Markdown, fetched right before
@@ -119,6 +125,15 @@ type cachedPage struct {
 	Format    string `json:"format"`
 	Markdown  string `json:"markdown"`
 	Truncated bool   `json:"truncated"`
+	// Title and Header (title and properties as drawn above the content)
+	// are kept so the page can be shown without a connection. The page
+	// object itself is not saved: it does not survive being written out
+	// and read back.
+	Title  string `json:"title,omitempty"`
+	Header string `json:"header,omitempty"`
+	// LastEdited is when Notion says the page last changed, as of the
+	// moment the copy was saved. A page changed since is loaded again.
+	LastEdited time.Time `json:"last_edited,omitempty"`
 }
 
 // editSession tracks one run of the external editor.
@@ -157,7 +172,11 @@ type DetailPage struct {
 	runEditor EditorRunner
 	exportDir string
 	readOnly  bool
-	keys      *keymap.Map
+	offline   bool // Showing a saved copy: Notion could not be reached
+	// Title and header of a saved copy, which has no page object
+	savedTitle  string
+	savedHeader string
+	keys        *keymap.Map
 
 	// Comments mode
 	comments        []notion.Comment
@@ -269,9 +288,20 @@ func (dp *DetailPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return dp, nil
 		}
 
+		if dp.offline && !msg.offline {
+			dp.clearNotice() // "Offline: ..." is no longer true
+		}
 		dp.page = msg.page
 		dp.loading = false
+		dp.err = nil
+		dp.offline = msg.offline
+		dp.savedTitle, dp.savedHeader = msg.title, msg.header
 		dp.statusBar.SetSyncStatus(components.StatusSynced)
+		dp.statusBar.SetMode(components.ModeBrowse)
+		if msg.offline {
+			dp.statusBar.SetMode(components.ModeOffline)
+			dp.setNotice(dp.keys.Label("Offline: this is the copy saved " + components.HumanAge(msg.age) + " ago | {reload}: try again"))
+		}
 		cmd := dp.showMarkdown(msg.markdown, msg.truncated)
 		// A to-do list on screen must follow the content it was built from
 		if dp.mode == modeTodos {
@@ -738,7 +768,11 @@ func (dp *DetailPage) showMarkdown(markdown string, truncated bool) tea.Cmd {
 		display = strings.TrimSpace(display + "\n\n" + truncatedNotice)
 	}
 	// Title and properties sit above the content, separated by a rule.
-	if header := pageHeader(dp.page); header != "" {
+	header := pageHeader(dp.page)
+	if dp.page == nil {
+		header = dp.savedHeader // A saved copy has no page object
+	}
+	if header != "" {
 		if display == "" {
 			display = header
 		} else {
@@ -759,10 +793,22 @@ const ReadOnlyNotice = "Read-only mode: this would change Notion, so it is turne
 
 // refuseChange reports whether changes are turned off, telling the user so.
 func (dp *DetailPage) refuseChange() bool {
-	if dp.readOnly {
+	switch {
+	case dp.readOnly:
 		dp.setNotice(ReadOnlyNotice)
+	case dp.offline:
+		// A change would be worked out against a copy that may be old
+		dp.setNotice(dp.keys.Label("Offline copy: reload with {reload} before changing anything"))
+	default:
+		return false
 	}
-	return dp.readOnly
+	return true
+}
+
+// Offline reports whether the page on screen is a saved copy, shown
+// because Notion could not be reached.
+func (dp *DetailPage) Offline() bool {
+	return dp.offline
 }
 
 func (dp *DetailPage) setNotice(text string) {
@@ -810,24 +856,29 @@ func (dp *DetailPage) clearNotice() {
 func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 	pageID := dp.pageID
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
 
-		if cached, ok := dp.readCache(ctx, pageID); ok {
-			// Page metadata is not cached
+		cached, age, fresh, ok := dp.readCache(ctx, pageID)
+		if ok && fresh {
+			// Title and properties are always asked for again: one quick
+			// call, which also tells whether the page changed since the
+			// copy was saved
 			page, err := dp.notionClient.GetPage(ctx, pageID)
-			if err != nil {
+			switch {
+			case err == nil && page.LastEditedTime.After(cached.LastEdited):
+				return dp.fetchContent(ctx, pageID, page)
+			case err == nil:
+				return pageLoadedMsg{pageID: pageID, page: page, markdown: cached.Markdown, truncated: cached.Truncated}
+			case notion.IsOffline(err):
+				return offlineCopy(pageID, cached, age)
+			default:
 				return pageLoadedMsg{pageID: pageID, err: fmt.Errorf("fetch page metadata: %w", err)}
-			}
-			return pageLoadedMsg{
-				pageID:    pageID,
-				page:      page,
-				markdown:  cached.Markdown,
-				truncated: cached.Truncated,
 			}
 		}
 
-		// Cache miss or error - fetch from API
-		return dp.fetchPageFromAPI(pageID)
+		// Nothing saved, or saved too long ago: ask Notion
+		return dp.fetchPageFromAPI(ctx, pageID)
 	}
 }
 
@@ -835,28 +886,45 @@ func (dp *DetailPage) fetchPageCmd() tea.Cmd {
 func (dp *DetailPage) fetchPageFromAPICmd() tea.Cmd {
 	pageID := dp.pageID
 	return func() tea.Msg {
-		return dp.fetchPageFromAPI(pageID)
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
+		return dp.fetchPageFromAPI(ctx, pageID)
 	}
 }
 
 // fetchPageFromAPI performs the actual API calls to fetch the page.
 // pageID is passed in rather than read from dp: this runs on another goroutine.
-func (dp *DetailPage) fetchPageFromAPI(pageID string) tea.Msg {
-	ctx := context.Background()
-
+func (dp *DetailPage) fetchPageFromAPI(ctx context.Context, pageID string) tea.Msg {
 	// Fetch page metadata
 	page, err := dp.notionClient.GetPage(ctx, pageID)
 	if err != nil {
-		return pageLoadedMsg{pageID: pageID, err: fmt.Errorf("fetch page: %w", err)}
+		return dp.loadFailed(pageID, fmt.Errorf("fetch page: %w", err))
 	}
+	return dp.fetchContent(ctx, pageID, page)
+}
 
+// loadFailed is the result of a load that failed. Without a connection, a
+// copy saved earlier is better than an error, however old it is.
+func (dp *DetailPage) loadFailed(pageID string, err error) tea.Msg {
+	if notion.IsOffline(err) {
+		// Not the load's context: it may be what ran out
+		if cached, age, _, ok := dp.readCache(context.Background(), pageID); ok {
+			return offlineCopy(pageID, cached, age)
+		}
+	}
+	return pageLoadedMsg{pageID: pageID, err: err}
+}
+
+// fetchContent loads the content of a page whose metadata is at hand, and
+// saves both.
+func (dp *DetailPage) fetchContent(ctx context.Context, pageID string, page *notionapi.Page) tea.Msg {
 	// One call returns the whole page, nested content included
 	content, err := dp.notionClient.GetPageMarkdown(ctx, pageID)
 	if err != nil {
-		return pageLoadedMsg{pageID: pageID, err: fmt.Errorf("fetch content: %w", err)}
+		return dp.loadFailed(pageID, fmt.Errorf("fetch content: %w", err))
 	}
 
-	dp.writeCache(ctx, pageID, content.Markdown, content.Truncated)
+	dp.writeCache(ctx, pageID, page, content.Markdown, content.Truncated)
 
 	return pageLoadedMsg{
 		pageID:    pageID,
@@ -867,41 +935,58 @@ func (dp *DetailPage) fetchPageFromAPI(pageID string) tea.Msg {
 }
 
 // readCache returns the cached content of a page, if a usable entry exists.
-func (dp *DetailPage) readCache(ctx context.Context, pageID string) (cachedPage, bool) {
+// readCache returns the saved copy of a page, how old it is, and whether
+// it is still fresh enough to show without asking Notion for the content.
+func (dp *DetailPage) readCache(ctx context.Context, pageID string) (entry cachedPage, age time.Duration, fresh, ok bool) {
 	if dp.cache == nil {
-		return cachedPage{}, false
+		return cachedPage{}, 0, false, false
 	}
-	raw, err := dp.cache.Get(ctx, pageID)
-	if err != nil {
-		return cachedPage{}, false
+	age, fresh, err := dp.cache.Load(ctx, pageID, &entry)
+	if err != nil || entry.Format != cacheFormat {
+		return cachedPage{}, 0, false, false
 	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return cachedPage{}, false
+	return entry, age, fresh, true
+}
+
+func lastEdited(page *notionapi.Page) time.Time {
+	if page == nil {
+		return time.Time{}
 	}
-	var entry cachedPage
-	if err := json.Unmarshal(encoded, &entry); err != nil || entry.Format != cacheFormat {
-		return cachedPage{}, false
+	return page.LastEditedTime
+}
+
+// offlineCopy is the result of a load answered from a saved copy.
+func offlineCopy(pageID string, cached cachedPage, age time.Duration) pageLoadedMsg {
+	return pageLoadedMsg{
+		pageID:    pageID,
+		markdown:  cached.Markdown,
+		truncated: cached.Truncated,
+		offline:   true,
+		age:       age,
+		title:     cached.Title,
+		header:    cached.Header,
 	}
-	return entry, true
 }
 
 // writeCache stores page content. Caching is best effort: a failed write
 // only means the next load hits the API again, so the error is dropped.
-func (dp *DetailPage) writeCache(ctx context.Context, pageID, markdown string, truncated bool) {
+func (dp *DetailPage) writeCache(ctx context.Context, pageID string, page *notionapi.Page, markdown string, truncated bool) {
 	if dp.cache == nil {
 		return
 	}
 	_ = dp.cache.Set(ctx, cache.SetInput{
 		PageID: pageID,
-		Data:   cachedPage{Format: cacheFormat, Markdown: markdown, Truncated: truncated},
-		TTL:    time.Hour,
+		Data: cachedPage{
+			Format: cacheFormat, Markdown: markdown, Truncated: truncated,
+			Title: notion.PageTitle(page), Header: pageHeader(page), LastEdited: lastEdited(page),
+		},
+		TTL: time.Hour,
 	})
 }
 
 // storeInCache updates the cache for the current page after a save.
 func (dp *DetailPage) storeInCache(markdown string, truncated bool) {
-	dp.writeCache(context.Background(), dp.pageID, markdown, truncated)
+	dp.writeCache(context.Background(), dp.pageID, dp.page, markdown, truncated)
 }
 
 // Busy reports whether an edit, save, create or export is in progress. The
@@ -935,6 +1020,9 @@ func (dp *DetailPage) Markdown() string {
 
 // Title returns the page title, or "Untitled".
 func (dp *DetailPage) Title() string {
+	if dp.page == nil && dp.savedTitle != "" {
+		return dp.savedTitle
+	}
 	return notion.PageTitle(dp.page)
 }
 

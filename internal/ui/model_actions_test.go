@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"context"
+	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Panandika/notion-tui/internal/cache"
 	"github.com/Panandika/notion-tui/internal/config"
 	"github.com/Panandika/notion-tui/internal/keymap"
+	"github.com/Panandika/notion-tui/internal/notion"
 	"github.com/Panandika/notion-tui/internal/ui/components"
 	"github.com/Panandika/notion-tui/internal/ui/pages"
 )
@@ -876,4 +881,52 @@ func TestModel_ReboundKeyDoesNotTypeIntoThePalette(t *testing.T) {
 	assert.False(t, isQuit(cmd))
 	assert.True(t, m.showPalette, "the palette is still open")
 	assert.False(t, m.cmdPalette.IsFiltering(), "and nothing was typed into it")
+}
+
+func TestTreeLoadFailed(t *testing.T) {
+	t.Parallel()
+
+	noNetwork := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	pageCache, err := cache.NewPageCache(cache.NewPageCacheInput{Dir: t.TempDir()})
+	require.NoError(t, err)
+
+	msg := treeLoadFailed(pageCache, noNetwork)
+	assert.Error(t, msg.err, "nothing saved yet")
+
+	require.NoError(t, pageCache.Set(context.Background(), cache.SetInput{PageID: treeCacheKey, Data: savedTree{
+		Format:  treeCacheFormat,
+		Results: []notion.SearchResult{{ID: "p1", Title: "Saved page", ObjectType: "page", ParentType: "workspace"}},
+	}}))
+
+	msg = treeLoadFailed(pageCache, noNetwork)
+	require.NoError(t, msg.err)
+	assert.True(t, msg.offline)
+	require.NotNil(t, msg.tree)
+	assert.Equal(t, 1, msg.tree.NodeCount())
+
+	msg = treeLoadFailed(pageCache, errors.New("unauthorized"))
+	assert.Error(t, msg.err, "an answer from Notion is not hidden behind a saved tree")
+	assert.False(t, msg.offline)
+
+	assert.Error(t, treeLoadFailed(nil, noNetwork).err, "no cache, no fallback")
+}
+
+func TestModel_OfflineBadgeFollowsWhatIsOnScreen(t *testing.T) {
+	t.Parallel()
+
+	m := newActionTestModel(t)
+	require.NotContains(t, m.View(), "OFFLINE")
+
+	tree := components.BuildNavTree(components.BuildNavTreeInput{})
+	updated, _ := m.Update(workspaceTreeMsg{tree: tree, offline: true, age: 3 * time.Hour})
+	m = updated.(AppModel)
+	view := m.View()
+	assert.Contains(t, view, "OFFLINE")
+	assert.Contains(t, view, "Offline: workspace as saved 3 h ago")
+
+	updated, _ = m.Update(workspaceTreeMsg{tree: tree})
+	m = updated.(AppModel)
+	view = m.View()
+	assert.NotContains(t, view, "OFFLINE", "the badge goes when the workspace loads again")
+	assert.NotContains(t, view, "Offline:")
 }

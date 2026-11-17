@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -54,6 +56,9 @@ type Config struct {
 	Keys map[string]string `mapstructure:"keys"`
 }
 
+// CacheOff as the cache directory turns the cache off.
+const CacheOff = "off"
+
 // ThemeAuto follows the terminal's background colour.
 const ThemeAuto = "auto"
 
@@ -72,6 +77,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// An empty cache_dir used to be how the cache was turned off, and
+	// still is: only a setting that is absent means the default directory.
+	if viper.IsSet("cache_dir") && strings.TrimSpace(viper.GetString("cache_dir")) == "" {
+		cfg.CacheDir = CacheOff
+	}
+	cfg.CacheDir = resolveCacheDir(cfg.CacheDir, os.UserHomeDir)
+
 	// Migrate legacy single database config to new format
 	if err := cfg.migrateLegacyConfig(); err != nil {
 		return nil, fmt.Errorf("migrate config: %w", err)
@@ -83,6 +95,32 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// resolveCacheDir decides where pages are kept for faster opening and for
+// reading without a connection: the configured directory, with a leading
+// "~" standing for the home directory, or ~/.cache/notion-tui. It returns
+// "" (no cache) when the user turned the cache off with "off", or when no
+// directory is configured and the home directory is unknown.
+func resolveCacheDir(configured string, homeDir func() (string, error)) string {
+	configured = strings.TrimSpace(configured)
+	if strings.EqualFold(configured, CacheOff) {
+		return ""
+	}
+	if configured != "" && configured != "~" && !strings.HasPrefix(configured, "~/") {
+		return configured
+	}
+	home, err := homeDir()
+	if err != nil || home == "" {
+		if configured == "" {
+			return ""
+		}
+		return configured
+	}
+	if configured == "" {
+		return filepath.Join(home, ".cache", "notion-tui")
+	}
+	return filepath.Join(home, strings.TrimPrefix(configured, "~"))
 }
 
 // migrateLegacyConfig converts old single database config to new multi-database format.

@@ -457,3 +457,42 @@ func TestIsExpired(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad(t *testing.T) {
+	t.Parallel()
+
+	type note struct {
+		Text string `json:"text"`
+	}
+	ctx := context.Background()
+	pageCache, err := NewPageCache(NewPageCacheInput{Dir: t.TempDir()})
+	require.NoError(t, err)
+
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "fresh", Data: note{Text: "new"}, TTL: time.Hour}))
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "old", Data: note{Text: "kept"}, TTL: time.Nanosecond}))
+	require.NoError(t, pageCache.Set(ctx, SetInput{PageID: "rows:db/1", Data: note{Text: "odd key"}}))
+	time.Sleep(2 * time.Millisecond)
+
+	var got note
+	age, fresh, err := pageCache.Load(ctx, "fresh", &got)
+	require.NoError(t, err)
+	assert.True(t, fresh)
+	assert.Equal(t, "new", got.Text)
+	assert.Less(t, age, time.Minute)
+
+	age, fresh, err = pageCache.Load(ctx, "old", &got)
+	require.NoError(t, err, "an entry past its time to live can still be read")
+	assert.False(t, fresh)
+	assert.Equal(t, "kept", got.Text)
+	assert.Positive(t, age)
+
+	_, expiredErr := pageCache.Get(ctx, "old")
+	assert.Error(t, expiredErr, "Get still treats it as gone")
+
+	_, _, err = pageCache.Load(ctx, "rows:db/1", &got)
+	require.NoError(t, err, "keys need not be file names")
+	assert.Equal(t, "odd key", got.Text)
+
+	_, _, err = pageCache.Load(ctx, "missing", &got)
+	assert.Error(t, err)
+}

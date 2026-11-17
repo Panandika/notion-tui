@@ -223,6 +223,7 @@ func TestDetailPage_Cache(t *testing.T) {
 
 	pageCache := mustCreateCache(t)
 	client := testhelpers.NewMockNotionClient()
+	client.PageToReturn = testhelpers.NewTestPage("page-1", "Test Page")
 	client.PageMarkdownToReturn = &notion.PageMarkdown{Markdown: "from api"}
 	open := func() (*DetailPage, *mockViewer) {
 		viewer := newMockViewer()
@@ -247,6 +248,18 @@ func TestDetailPage_Cache(t *testing.T) {
 	assert.Equal(t, "changed in notion", dp.Markdown())
 	_, thirdViewer := open()
 	assert.Contains(t, thirdViewer.markdown, "changed in notion")
+
+	// A page Notion says was edited after the copy was saved is loaded again
+	edited := *client.PageToReturn
+	edited.LastEditedTime = edited.LastEditedTime.Add(time.Minute)
+	client.PageToReturn = &edited
+	client.PageMarkdownToReturn = &notion.PageMarkdown{Markdown: "edited in the Notion app"}
+	_, fourthViewer := open()
+	assert.Contains(t, fourthViewer.markdown, "edited in the Notion app", "a saved copy older than the page is not shown as current")
+	calls := len(client.GetPageMarkdownCalls)
+	_, fifthViewer := open()
+	assert.Contains(t, fifthViewer.markdown, "edited in the Notion app")
+	assert.Len(t, client.GetPageMarkdownCalls, calls, "and then it is the saved copy again")
 }
 
 func TestDetailPage_IgnoresCacheEntriesInOldFormat(t *testing.T) {

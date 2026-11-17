@@ -169,6 +169,10 @@ func (dp *DetailPage) startCommentInput(threadID string) tea.Cmd {
 		dp.inputErr = ReadOnlyNotice
 		return nil
 	}
+	if dp.offline {
+		dp.inputErr = "Offline: a comment cannot be posted now"
+		return nil
+	}
 	input := textinput.New()
 	input.Prompt = "Comment: "
 	if threadID != "" {

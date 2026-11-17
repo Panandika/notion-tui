@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -18,6 +19,35 @@ import (
 type workspaceTreeMsg struct {
 	tree *components.NavTree
 	err  error
+	// offline marks a tree built from what was saved earlier, because
+	// Notion could not be reached; age is how long ago that was.
+	offline bool
+	age     time.Duration
+}
+
+// Cache entry holding the workspace tree for use without a connection.
+const (
+	treeCacheKey    = "workspace-tree"
+	treeCacheFormat = "tree-v1"
+)
+
+type savedTree struct {
+	Format  string                `json:"format"`
+	Results []notion.SearchResult `json:"results"`
+}
+
+// treeLoadFailed is the result of a workspace load that failed. Without a
+// connection, the workspace as last seen is better than an error.
+func treeLoadFailed(pageCache *cache.PageCache, err error) workspaceTreeMsg {
+	var saved savedTree
+	if pageCache != nil && notion.IsOffline(err) {
+		age, _, loadErr := pageCache.Load(context.Background(), treeCacheKey, &saved)
+		if loadErr == nil && saved.Format == treeCacheFormat {
+			tree := components.BuildNavTree(components.BuildNavTreeInput{Results: saved.Results})
+			return workspaceTreeMsg{tree: tree, offline: true, age: age}
+		}
+	}
+	return workspaceTreeMsg{err: fmt.Errorf("fetch workspace: %w", err)}
 }
 
 // AppModel represents the root TUI orchestrator that manages pages and global components.
@@ -68,6 +98,29 @@ type AppModel struct {
 
 	// reloadingTree is set while a tree reload the user asked for runs
 	reloadingTree bool
+	// treeOffline is set while the tree shown is a saved copy
+	treeOffline bool
+}
+
+// statusMode is the badge at the bottom left. OFFLINE follows what is on
+// screen now, the page in front or the workspace tree, so it appears and
+// goes away with the connection.
+func (m *AppModel) statusMode() string {
+	offline := m.treeOffline
+	switch page := m.pages[m.currentPage].(type) {
+	case *pages.DetailPage:
+		offline = offline || page.Offline()
+	case *pages.ListPage:
+		offline = offline || page.Offline()
+	}
+	switch {
+	case offline:
+		return components.ModeOffline
+	case m.config.ReadOnly:
+		return modeReadOnly
+	default:
+		return components.ModeBrowse
+	}
 }
 
 // modeReadOnly is shown in the status bar while changes are turned off.
@@ -179,14 +232,18 @@ func (m AppModel) Init() tea.Cmd {
 // fetchWorkspaceTreeCmd returns a command that fetches the workspace tree.
 func (m *AppModel) fetchWorkspaceTreeCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
 
 		// Fetch all workspace items
 		resp, err := m.notionClient.Search(ctx, notion.SearchInput{
 			PageSize: 100,
 		})
 		if err != nil {
-			return workspaceTreeMsg{err: fmt.Errorf("fetch workspace: %w", err)}
+			return treeLoadFailed(m.cache, err)
+		}
+		if m.cache != nil {
+			_ = m.cache.Set(ctx, cache.SetInput{PageID: treeCacheKey, Data: savedTree{Format: treeCacheFormat, Results: resp.Results}})
 		}
 
 		// Build tree from results
@@ -307,6 +364,16 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The reload the user asked for is over
 			m.reloadingTree = false
 			m.statusBar.SetHelpText(m.keys.Label("{help} for help"))
+		}
+		switch {
+		case msg.offline:
+			m.treeOffline = true
+			m.statusBar.SetHelpText("Offline: workspace as saved " + components.HumanAge(msg.age) + " ago")
+		case msg.err == nil:
+			if m.treeOffline {
+				m.statusBar.SetHelpText(m.keys.Label("{help} for help"))
+			}
+			m.treeOffline = false
 		}
 		return m, nil
 
@@ -628,7 +695,9 @@ func (m AppModel) View() string {
 	}
 
 	// Add status bar at bottom
-	statusView := m.statusBar.View()
+	statusBar := m.statusBar
+	statusBar.SetMode(m.statusMode())
+	statusView := statusBar.View()
 	finalView := LayoutWithStatusBar(LayoutWithStatusBarInput{
 		Content:   mainContent,
 		StatusBar: statusView,

@@ -15,7 +15,7 @@ Browse your workspace, read pages, edit them in your own editor, create pages an
 - **Read-only mode** - `--readonly` guarantees nothing in Notion is changed
 - **Your keys, your colours** - Rebind actions and pick a theme in the config file
 - **Search** - Search the workspace or a single database
-- **Cache** - Page content is cached on disk for faster reopening
+- **Cache and offline reading** - Pages, rows and the workspace tree are saved on disk; without a connection you can still read what you have opened before
 - **Rate limiting** - Stays within Notion's API limits and waits when the API asks it to
 
 ## Installation
@@ -244,7 +244,15 @@ List databases under `databases:` in the config file with a name and optional ic
 
 ### Cache
 
-Page content is cached under `~/.cache/notion-tui` for one hour. `r` on a page reloads from Notion and refreshes the cache. Page titles and properties are always fetched live, so the app needs a connection.
+Pages you open, the first rows of databases you list and the workspace tree are saved under `~/.cache/notion-tui` (`cache_dir` or `NOTION_TUI_CACHE_DIR` to change it; `cache_dir: off` or `cache_dir: ""` to save nothing). The files are readable only by you.
+
+Titles and properties are fetched every time a page is opened. Its content is taken from the saved copy for up to an hour, unless Notion reports the page was edited since the copy was saved; `r` reloads it in any case.
+
+### Offline reading
+
+When Notion cannot be reached (no network, a timeout, a Notion outage), the app shows what it saved instead of an error: the workspace tree, the rows of databases you have listed, and every page you have opened, however long ago. The status bar shows `OFFLINE` and how old the copy is, and `r` tries Notion again.
+
+An offline copy cannot be changed: editing, properties, to-dos, new rows, comments and archiving ask you to reload first, so a change is never worked out against old content. Pages you have never opened, filtered row lists, comments and search need a connection.
 
 ## Limitations
 
@@ -399,13 +407,12 @@ notion-tui/
 ### Cache issues
 
 - Clear cache: `rm -rf ~/.cache/notion-tui`
-- Disable cache: set `cache_dir: ""` in config
+- Disable cache: set `cache_dir: off` in config
 - Check permissions on cache directory
 
 ### Performance issues
 
 - Rate limiting may slow down large databases
-- Try enabling cache for offline browsing
 - Consider paginating large result sets
 
 ## Contributing
@@ -454,7 +461,6 @@ Special thanks to:
 
 Planned next, roughly in order:
 
-- Offline reading from the cache
 - Saved database views
 
 ---

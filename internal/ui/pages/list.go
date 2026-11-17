@@ -64,6 +64,10 @@ type pagesLoadedMsg struct {
 	// than a fresh first page. epoch is the reload the rows belong to.
 	more  bool
 	epoch int
+	// offline marks rows saved earlier, shown because Notion could not be
+	// reached; age is how long ago they were saved.
+	offline bool
+	age     time.Duration
 }
 
 // rowCreatedMsg is the result of creating a new row.
@@ -123,6 +127,7 @@ type ListPage struct {
 	cache        *cache.PageCache
 	databaseID   string
 	readOnly     bool
+	offline      bool // Showing saved rows: Notion could not be reached
 	keys         *keymap.Map
 
 	sort      rowSort
@@ -254,6 +259,15 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lp.nextCursor = msg.nextCursor
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
+		lp.statusBar.SetMode(components.ModeBrowse)
+		if lp.offline && !msg.offline {
+			lp.notice = "" // "Offline: ..." is no longer true
+		}
+		lp.offline = msg.offline
+		if msg.offline {
+			lp.statusBar.SetMode(components.ModeOffline)
+			lp.notice = lp.keys.Label("Offline: these are the rows saved " + components.HumanAge(msg.age) + " ago | {row_reload}: try again")
+		}
 		lp.updateStatusBarFromSidebar()
 		return lp, nil
 
@@ -483,6 +497,11 @@ func (lp *ListPage) startNewRow() tea.Cmd {
 		lp.statusBar.SetHelpText(ReadOnlyNotice)
 		return nil
 	}
+	if lp.offline {
+		lp.notice = lp.keys.Label("Offline: reload with {row_reload} before adding a row")
+		lp.statusBar.SetHelpText(lp.notice)
+		return nil
+	}
 	input := textinput.New()
 	input.Prompt = "New row title: "
 	input.CharLimit = 200
@@ -648,6 +667,12 @@ func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	return lp.fetchPagesCmd()
 }
 
+// Offline reports whether the rows on screen are a saved copy, shown
+// because Notion could not be reached.
+func (lp *ListPage) Offline() bool {
+	return lp.offline
+}
+
 // Filter returns the property filter in effect.
 func (lp *ListPage) Filter() notion.RowFilter {
 	return lp.filter
@@ -682,7 +707,8 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	lp.nextCursor = ""
 	filter, epoch, now := lp.filter, lp.epoch, lp.now
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
+		defer cancel()
 
 		if lp.notionClient == nil {
 			return pagesLoadedMsg{
@@ -693,6 +719,12 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 
 		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, filter.Query("", now()))
 		if err != nil {
+			// Without a connection, the rows saved earlier are better than
+			// an error. Only the unfiltered list is saved.
+			// (read with its own context: the load's may be what ran out)
+			if saved, age, ok := lp.savedRows(context.Background()); ok && notion.IsOffline(err) && !filter.Active() {
+				return pagesLoadedMsg{epoch: epoch, pages: saved, offline: true, age: age}
+			}
 			return pagesLoadedMsg{
 				epoch: epoch,
 				err:   fmt.Errorf("fetch pages: %w", err),
@@ -704,6 +736,10 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 			pages = append(pages, rowFromPage(&p))
 		}
 
+		if !filter.Active() {
+			lp.saveRows(ctx, pages)
+		}
+
 		return pagesLoadedMsg{
 			epoch:      epoch,
 			pages:      pages,
@@ -711,6 +747,39 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 			nextCursor: string(resp.NextCursor),
 		}
 	}
+}
+
+// savedRowsFormat marks cache entries holding a database's rows.
+const savedRowsFormat = "rows-v1"
+
+// savedRowList is the first page of a database's rows as kept in the
+// cache for reading without a connection.
+type savedRowList struct {
+	Format string `json:"format"`
+	Rows   []Page `json:"rows"`
+}
+
+func (lp *ListPage) rowsCacheKey() string {
+	return "rows:" + lp.databaseID
+}
+
+func (lp *ListPage) saveRows(ctx context.Context, rows []Page) {
+	if lp.cache == nil {
+		return
+	}
+	_ = lp.cache.Set(ctx, cache.SetInput{PageID: lp.rowsCacheKey(), Data: savedRowList{Format: savedRowsFormat, Rows: rows}})
+}
+
+func (lp *ListPage) savedRows(ctx context.Context) (rows []Page, age time.Duration, ok bool) {
+	if lp.cache == nil {
+		return nil, 0, false
+	}
+	var saved savedRowList
+	age, _, err := lp.cache.Load(ctx, lp.rowsCacheKey(), &saved)
+	if err != nil || saved.Format != savedRowsFormat {
+		return nil, 0, false
+	}
+	return saved.Rows, age, true
 }
 
 // loadMoreCmd returns a command that fetches the next page of results.
