@@ -22,6 +22,10 @@ builds:
       - arm
     goarm:
       - 7
+    ignore:
+      # Go no longer supports 32-bit ARM on Windows
+      - goos: windows
+        goarch: arm
     ldflags:
       - -X github.com/Panandika/notion-tui/internal/version.Version={{.Version}}
       - -X github.com/Panandika/notion-tui/internal/version.Commit={{.Commit}}

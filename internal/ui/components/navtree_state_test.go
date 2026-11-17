@@ -47,11 +47,19 @@ func TestNavTree_ReloadKeepsOpenNodesAndSelection(t *testing.T) {
 	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: without}))
 	assert.Equal(t, "b2", view.Selected().ID, "the row that moved up into its place")
 
-	// The selected item moved under a parent that is closed: its parent
-	moved := []notion.SearchResult{results[0], results[1], results[2], {ID: "b2", Title: "Beta second", ObjectType: "page", ParentType: "page_id", ParentID: "a"}}
-	view.Tree().SelectByID("b2")
+	// The selected item moved under a new parent, which starts closed: the
+	// selection goes to that parent. It is on row 1, so neither the top of
+	// the tree nor the old row (2) would give the same answer.
+	moved := []notion.SearchResult{
+		results[0], results[1],
+		{ID: "z", Title: "Azure", ObjectType: "page", ParentType: "workspace"},
+		results[2],
+		{ID: "b2", Title: "Beta second", ObjectType: "page", ParentType: "page_id", ParentID: "z"},
+	}
+	require.Equal(t, 2, view.Tree().SelectedIndex())
 	view.SetTree(BuildNavTree(BuildNavTreeInput{Results: moved}))
-	assert.Equal(t, "a", view.Selected().ID)
+	require.Equal(t, []string{"a", "z", "b"}, visible(view.Tree()))
+	assert.Equal(t, "z", view.Selected().ID)
 
 	// Everything is gone
 	view.SetTree(BuildNavTree(BuildNavTreeInput{}))
