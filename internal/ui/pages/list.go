@@ -2,9 +2,12 @@ package pages
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -68,6 +71,11 @@ type pagesLoadedMsg struct {
 	// reached; age is how long ago they were saved.
 	offline bool
 	age     time.Duration
+	// Set for the rows of a view: the result set later pages come from,
+	// and the rows already known, so they need not be fetched again.
+	viewQueryID string
+	viewKnown   map[string]Page
+	skipped     int // Rows of the view that could not be read
 }
 
 // rowCreatedMsg is the result of creating a new row.
@@ -105,6 +113,11 @@ func (s rowSort) String() string {
 		return "Notion order"
 	}
 }
+
+// loadCounter numbers every load of rows in the app. A row list is rebuilt
+// when the user switches database, so numbers of its own would start over
+// and a slow answer for the old list could pass for one of the new.
+var loadCounter atomic.Int64
 
 // summaryProperties is how many property values a row shows under its title.
 const summaryProperties = 3
@@ -144,6 +157,12 @@ type ListPage struct {
 	filterProp    int                     // Property chosen in the first picker
 	picker        components.Picker
 	now           func() time.Time // Clock for date conditions
+
+	// Showing the rows of a view saved in Notion, instead of a filter
+	view        notion.View     // The view in effect; no ID means none
+	viewChoices []notion.View   // What the view picker chooses from
+	viewQueryID string          // Notion's result set for the view, for "load more"
+	viewKnown   map[string]Page // Rows already loaded, by ID; replaced, never changed
 }
 
 // filterStage is a step of choosing a property filter.
@@ -154,6 +173,8 @@ const (
 	filterLoading               // Waiting for the database's properties
 	filterProperty              // Choosing the property
 	filterCondition             // Choosing the condition for it
+	viewLoading                 // Waiting for the database's views
+	viewChoosing                // Choosing a view
 )
 
 // filterSchemaMsg carries the properties rows can be filtered by.
@@ -164,6 +185,15 @@ type filterSchemaMsg struct {
 }
 
 func (filterSchemaMsg) listResult() {}
+
+// viewsLoadedMsg carries the views saved on the database.
+type viewsLoadedMsg struct {
+	databaseID string
+	views      []notion.View
+	err        error
+}
+
+func (viewsLoadedMsg) listResult() {}
 
 // NewListPageInput contains the parameters for creating a new ListPage.
 type NewListPageInput struct {
@@ -232,6 +262,19 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.epoch != lp.epoch {
 			return lp, nil
 		}
+		if msg.err != nil && msg.more {
+			// The rows on screen are still good: say what went wrong and
+			// leave them. "Load more" can be tried again.
+			lp.loadingMore = false
+			lp.statusBar.SetSyncStatus(components.StatusError)
+			lp.notice = "Could not load more rows: " + msg.err.Error()
+			if errors.Is(msg.err, errViewExpired) {
+				lp.hasMore = false
+				lp.notice = lp.keys.Label("Notion keeps a view's rows for 15 minutes: reload with {row_reload} to load more")
+			}
+			lp.updateStatusBarFromSidebar()
+			return lp, nil
+		}
 		if msg.err != nil {
 			lp.loading = false
 			lp.loadingMore = false
@@ -257,6 +300,12 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		lp.hasMore = msg.hasMore
 		lp.nextCursor = msg.nextCursor
+		if !msg.more {
+			lp.viewQueryID = msg.viewQueryID
+		}
+		if !msg.more || msg.viewKnown != nil {
+			lp.viewKnown = msg.viewKnown
+		}
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
 		lp.statusBar.SetMode(components.ModeBrowse)
@@ -267,6 +316,9 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.offline {
 			lp.statusBar.SetMode(components.ModeOffline)
 			lp.notice = lp.keys.Label("Offline: these are the rows saved " + components.HumanAge(msg.age) + " ago | {row_reload}: try again")
+		}
+		if msg.skipped > 0 {
+			lp.notice = fmt.Sprintf("%d rows of the view could not be read and are left out", msg.skipped)
 		}
 		lp.updateStatusBarFromSidebar()
 		return lp, nil
@@ -299,6 +351,24 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			lp.filterChoices = msg.properties
 			lp.openPropertyPicker()
+			return lp, nil
+		}
+		lp.updateStatusBarFromSidebar()
+		return lp, nil
+
+	case viewsLoadedMsg:
+		if msg.databaseID != lp.databaseID || lp.filterStage != viewLoading {
+			return lp, nil // The user moved on before the answer came
+		}
+		lp.filterStage = filterOff
+		switch {
+		case msg.err != nil:
+			lp.notice = "Could not load the views: " + msg.err.Error()
+		case len(msg.views) == 0:
+			lp.notice = "This database has no views that list its rows"
+		default:
+			lp.viewChoices = msg.views
+			lp.openViewPicker()
 			return lp, nil
 		}
 		lp.updateStatusBarFromSidebar()
@@ -337,10 +407,13 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return lp, lp.startPropertyFilter()
 
 		case "P":
-			if lp.filter.Active() && !lp.loading {
+			if (lp.filter.Active() || lp.view.ID != "") && !lp.loading {
 				return lp, lp.applyFilter(notion.RowFilter{})
 			}
 			return lp, nil
+
+		case "v":
+			return lp, lp.startViews()
 
 		case "s":
 			lp.sort = (lp.sort + 1) % 3
@@ -398,7 +471,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the list page.
 func (lp *ListPage) View() string {
 	// An open picker takes every key, so it must always be the thing shown
-	if lp.filterStage == filterProperty || lp.filterStage == filterCondition {
+	if lp.filterStage == filterProperty || lp.filterStage == filterCondition || lp.filterStage == viewChoosing {
 		return lipgloss.JoinVertical(lipgloss.Left, lp.picker.View(lp.width, lp.height-1), lp.statusBar.View())
 	}
 
@@ -432,6 +505,10 @@ func (lp *ListPage) View() string {
 			text += fmt.Sprintf("\n\nRows are limited to: %s.", lp.filter.Label) +
 				lp.keys.Label(" Press {row_clear_filter} to show all rows")
 		}
+		if lp.view.ID != "" {
+			text += fmt.Sprintf("\n\nShowing the view %s.", lp.view.Name) +
+				lp.keys.Label(" Press {row_reload} to try again, {row_clear_filter} to show all rows")
+		}
 		main := errorStyle.Render(text)
 		status := lp.statusBar.View()
 
@@ -447,6 +524,17 @@ func (lp *ListPage) View() string {
 			Align(lipgloss.Center, lipgloss.Center).
 			Foreground(lipgloss.Color("#6B7280"))
 		text := fmt.Sprintf("No rows where %s.", lp.filter.Label) +
+			lp.keys.Label(" Press {row_clear_filter} to show all rows")
+		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render(text), status)
+	}
+
+	if len(lp.pageList) == 0 && lp.view.ID != "" && !lp.prompting {
+		emptyStyle := lipgloss.NewStyle().
+			Width(lp.width).
+			Height(lp.height-1).
+			Align(lipgloss.Center, lipgloss.Center).
+			Foreground(lipgloss.Color("#6B7280"))
+		text := fmt.Sprintf("The view %s has no rows.", lp.view.Name) +
 			lp.keys.Label(" Press {row_clear_filter} to show all rows")
 		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render(text), status)
 	}
@@ -620,7 +708,7 @@ func (lp *ListPage) openConditionPicker() {
 
 // updateFilterPicker handles a key while a filter picker is open.
 func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
-	if lp.filterStage == filterLoading {
+	if lp.filterStage == filterLoading || lp.filterStage == viewLoading {
 		if msg.String() == "esc" {
 			lp.filterStage = filterOff
 			lp.updateStatusBarFromSidebar()
@@ -644,6 +732,10 @@ func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
 			lp.openConditionPicker()
 			return nil
 		}
+		if lp.filterStage == viewChoosing {
+			lp.filterStage = filterOff
+			return lp.applyView(lp.viewChoices[lp.picker.Cursor()])
+		}
 		lp.filterStage = filterOff
 		return lp.applyFilter(lp.filterChoices[lp.filterProp].Choices[lp.picker.Cursor()])
 	}
@@ -654,6 +746,7 @@ func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
 // value.
 func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	lp.filter = filter
+	lp.view = notion.View{} // A view and a filter of ours do not combine
 	// The heading says it too: the status bar drops its text when narrow
 	title := "Pages"
 	if filter.Active() {
@@ -665,6 +758,183 @@ func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	lp.statusBar.SetSyncStatus(components.StatusSyncing)
 	lp.statusBar.SetHelpText("Loading rows...")
 	return lp.fetchPagesCmd()
+}
+
+// startViews loads the views saved on the database and then offers them.
+func (lp *ListPage) startViews() tea.Cmd {
+	if lp.loading || lp.creating || lp.notionClient == nil {
+		return nil
+	}
+	lp.filterStage = viewLoading
+	lp.statusBar.SetHelpText("Loading views... | esc: cancel")
+
+	client, databaseID := lp.notionClient, lp.databaseID
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), viewTimeout)
+		defer cancel()
+		views, err := client.ListViews(ctx, databaseID)
+		for i := range views {
+			// Names are the user's text, and are drawn as they are
+			views[i].Name = oneLine(views[i].Name)
+			if views[i].Name == "" {
+				views[i].Name = "Untitled view"
+			}
+			views[i].Type = oneLine(views[i].Type)
+		}
+		return viewsLoadedMsg{databaseID: databaseID, views: views, err: err}
+	}
+}
+
+func (lp *ListPage) openViewPicker() {
+	items := make([]components.PickerItem, len(lp.viewChoices))
+	cursor := 0
+	for i, view := range lp.viewChoices {
+		items[i] = components.PickerItem{Label: view.Name, Detail: view.Type}
+		if view.ID == lp.view.ID {
+			cursor = i
+		}
+	}
+	lp.picker = components.NewPicker("Show the rows of the view...", items)
+	lp.picker.SetCursor(cursor)
+	lp.filterStage = viewChoosing
+	lp.statusBar.SetHelpText("↑/↓: move | enter: show | esc: cancel")
+}
+
+// applyView reloads the rows as a view saved in Notion shows them: the
+// rows it filters to, in its order.
+func (lp *ListPage) applyView(view notion.View) tea.Cmd {
+	lp.view = view
+	lp.filter = notion.RowFilter{}
+	lp.offline = false // A view is never shown from a saved copy
+	lp.sidebar.SetTitle("Pages in the view " + view.Name)
+	lp.loading = true
+	lp.hasMore = false
+	lp.statusBar.SetSyncStatus(components.StatusSyncing)
+	lp.statusBar.SetHelpText("Loading the view...")
+	return lp.fetchPagesCmd()
+}
+
+// ShownView returns the Notion view whose rows are shown; its ID is empty when
+// none is.
+func (lp *ListPage) ShownView() notion.View {
+	return lp.view
+}
+
+// viewTimeout bounds loading a view or the list of views. It is longer
+// than for other reads: rows a view names that are not among the
+// database's first rows are fetched one by one.
+const viewTimeout = 90 * time.Second
+
+// rowKey makes a row ID comparable however it is written.
+func rowKey(id string) string {
+	return strings.ToLower(strings.ReplaceAll(id, "-", ""))
+}
+
+// viewRowsCmd loads the first page of the rows of the view in effect.
+func (lp *ListPage) viewRowsCmd(epoch int) tea.Cmd {
+	client, databaseID, view := lp.notionClient, lp.databaseID, lp.view
+	return func() tea.Msg {
+		if client == nil {
+			return pagesLoadedMsg{epoch: epoch, err: fmt.Errorf("notion client not initialized")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), viewTimeout)
+		defer cancel()
+
+		result, err := client.QueryView(ctx, view.ID)
+		if err != nil {
+			return pagesLoadedMsg{epoch: epoch, err: fmt.Errorf("fetch pages: %w", err)}
+		}
+
+		// The view only names its rows. Most are among the database's
+		// first rows, which one request brings; the rest are fetched one
+		// by one.
+		known := map[string]Page{}
+		if len(result.RowIDs) > 0 {
+			resp, err := client.QueryDatabase(ctx, databaseID, nil)
+			if err != nil {
+				return pagesLoadedMsg{epoch: epoch, err: fmt.Errorf("fetch pages: %w", err)}
+			}
+			for i := range resp.Results {
+				row := rowFromPage(&resp.Results[i])
+				known[rowKey(row.ID)] = row
+			}
+		}
+		rows, known, skipped, err := viewRows(ctx, client, result.RowIDs, known)
+		if err != nil {
+			return pagesLoadedMsg{epoch: epoch, err: fmt.Errorf("fetch pages: %w", err)}
+		}
+		return pagesLoadedMsg{
+			epoch: epoch, pages: rows, skipped: skipped,
+			// Later pages are asked for by the result's ID
+			hasMore: result.HasMore && result.NextCursor != "" && result.QueryID != "", nextCursor: result.NextCursor,
+			viewQueryID: result.QueryID, viewKnown: known,
+		}
+	}
+}
+
+// viewRows turns the row IDs of a view into rows, in the same order. A
+// row not in known is fetched; the returned map is known plus those rows,
+// as a new map, since known may be in use elsewhere. A row Notion will
+// not hand out (not shared with the connection, or gone since the view
+// ran) is left out and counted in skipped.
+func viewRows(ctx context.Context, client NotionClient, ids []string, known map[string]Page) (rows []Page, all map[string]Page, skipped int, err error) {
+	all = make(map[string]Page, len(known)+len(ids))
+	for key, row := range known {
+		all[key] = row
+	}
+	rows = make([]Page, 0, len(ids))
+	for _, id := range ids {
+		row, ok := all[rowKey(id)]
+		if !ok {
+			page, err := client.GetPage(ctx, id)
+			var apiErr *notionapi.Error
+			if errors.As(err, &apiErr) && (apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusForbidden) {
+				skipped++
+				continue
+			}
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			row = rowFromPage(page)
+			all[rowKey(id)] = row
+		}
+		rows = append(rows, row)
+	}
+	return rows, all, skipped, nil
+}
+
+// errViewExpired says Notion no longer has the rows it prepared for a view.
+var errViewExpired = errors.New("the rows Notion prepared for this view have expired")
+
+// viewMoreCmd loads the next page of the rows of the view in effect.
+func (lp *ListPage) viewMoreCmd() tea.Cmd {
+	client, view, epoch := lp.notionClient, lp.view, lp.epoch
+	queryID, cursor, known := lp.viewQueryID, lp.nextCursor, lp.viewKnown
+	return func() tea.Msg {
+		if client == nil {
+			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("notion client not initialized")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), viewTimeout)
+		defer cancel()
+
+		result, err := client.ViewRowsAfter(ctx, view.ID, queryID, cursor)
+		if err != nil {
+			var apiErr *notionapi.Error
+			if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+				// Notion keeps the rows of a view for 15 minutes
+				err = errViewExpired
+			}
+			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("fetch more pages: %w", err)}
+		}
+		rows, known, skipped, err := viewRows(ctx, client, result.RowIDs, known)
+		if err != nil {
+			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("fetch more pages: %w", err)}
+		}
+		return pagesLoadedMsg{
+			more: true, epoch: epoch, pages: rows, skipped: skipped, viewKnown: known,
+			hasMore: result.HasMore && result.NextCursor != "", nextCursor: result.NextCursor,
+		}
+	}
 }
 
 // Offline reports whether the rows on screen are a saved copy, shown
@@ -702,10 +972,13 @@ func (lp *ListPage) Refresh() tea.Cmd {
 func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	// A fresh first page starts a new list: anything still loading for the
 	// old one no longer applies.
-	lp.epoch++
+	lp.epoch = int(loadCounter.Add(1))
 	lp.loadingMore = false
 	lp.nextCursor = ""
 	filter, epoch, now := lp.filter, lp.epoch, lp.now
+	if lp.view.ID != "" {
+		return lp.viewRowsCmd(epoch)
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), notion.ReadTimeout)
 		defer cancel()
@@ -784,6 +1057,9 @@ func (lp *ListPage) savedRows(ctx context.Context) (rows []Page, age time.Durati
 
 // loadMoreCmd returns a command that fetches the next page of results.
 func (lp *ListPage) loadMoreCmd() tea.Cmd {
+	if lp.view.ID != "" {
+		return lp.viewMoreCmd()
+	}
 	epoch := lp.epoch
 	cursor := lp.nextCursor
 	filter, now := lp.filter, lp.now
@@ -1013,13 +1289,19 @@ func (lp *ListPage) updateStatusBarFromSidebar() {
 		lp.statusBar.SetHelpText(lp.notice)
 	case !lp.loading && !lp.loadingMore:
 		helpText := fmt.Sprintf("%d pages | enter: open | ", len(lp.pageList)) +
-			lp.keys.Label(fmt.Sprintf("{row_new}: new | {row_sort}: sort (%s) | {row_filter}: filter | {row_property_filter}: by property | {row_reload}: refresh", lp.sort))
+			lp.keys.Label(fmt.Sprintf("{row_new}: new | {row_sort}: sort (%s) | {row_filter}: filter | {row_property_filter}: by property | {row_view}: views | {row_reload}: refresh", lp.sort))
 		if lp.filter.Active() {
 			// The filter comes first: it explains why rows are missing.
 			// Its label holds property and option names, which are the
 			// user's, so only the hints go through Label.
 			helpText = fmt.Sprintf("%d pages where %s", len(lp.pageList), lp.filter.Label) +
 				lp.keys.Label(" | {row_clear_filter}: show all | {row_property_filter}: change | enter: open")
+		}
+		if lp.view.ID != "" {
+			// The view's name is the user's text, so only the hints go
+			// through Label.
+			helpText = fmt.Sprintf("%d pages in the view %s", len(lp.pageList), lp.view.Name) +
+				lp.keys.Label(" | {row_clear_filter}: show all | {row_view}: other view | enter: open")
 		}
 		if lp.hasMore {
 			helpText += lp.keys.Label(" | {row_more}: load more")

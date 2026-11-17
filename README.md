@@ -11,6 +11,7 @@ Browse your workspace, read pages, edit them in your own editor, create pages an
 - **Edit** - Open a page in `$VISUAL` / `$EDITOR`; only the parts you changed are written back, so formatting elsewhere is untouched
 - **Create** - New pages inside the page you are viewing, written in your editor
 - **Export** - Save a page as plain Markdown, from the app or with `notion-tui export`
+- **Database views** - Sort and filter rows, or show a view saved in Notion
 - **Quick capture** - `notion-tui add "text"` adds a database row or a page straight from the shell
 - **Read-only mode** - `--readonly` guarantees nothing in Notion is changed
 - **Your keys, your colours** - Rebind actions and pick a theme in the config file
@@ -166,11 +167,19 @@ Press `?` in the app for the full key reference.
 | `s` | Change sort order: Notion order, title, last edited |
 | `/` | Filter rows by title |
 | `p` | Show only rows with a certain property value (see below) |
+| `v` | Show the rows of a view saved in Notion (see below) |
 | `P` | Show all rows again |
 | `m` | Load more rows |
 | `r` | Reload |
 
 `p` lists the database's status, select, multi-select, checkbox and date properties; pick one, then a condition (`is Done`, `is checked`, `is before today`, `is in the next 7 days` (today included), `is empty`, ...). Notion does the filtering, so rows that are not loaded yet are covered too, and loading more or reloading keeps the filter. The heading above the rows and the status bar name the filter while it is on.
+
+`v` lists the views saved on the database in Notion (table, board, list and so on); pick one to see the rows it shows, in its order, with its filters and sorts applied by Notion. `P` goes back to all rows. A view replaces a `p` filter and the other way round. Things to know:
+
+- Notion's API says which rows a view holds, not what it filters by, so the app cannot show the view's conditions.
+- Rows are loaded 25 at a time (`m` for more). A row that is not among the database's first 100 is fetched on its own, which makes views of large databases slower to load.
+- Notion keeps a view's result for 15 minutes; after that, `m` asks you to reload with `r`.
+- Views are not saved for offline reading.
 
 ### Command palette
 `Ctrl+P` opens it; move with `j` / `k`, filter with `/`, run with `Enter`. Commands: Search Workspace, Switch Database, Refresh, New Page, Export Page, Help, Quit.
@@ -279,7 +288,7 @@ keys:
 
 A key is one character, `ctrl+<letter>`, `alt+<character>`, `f1`-`f12`, `tab` or `shift+tab`; put punctuation in quotes (`back: "<"`). Keys for moving, confirming and leaving (arrows, `h j k l`, `g G`, `f b u d`, `ctrl+u`, `ctrl+d`, `ctrl+t`, space, `Enter`, `Esc`, `Ctrl+C`) cannot be reassigned. The app refuses to start if a key would mean two things on the same screen, and names both actions. An action's default key stops working once it has another key. The help screen (`?`) and the hints in the status bar show the keys in effect.
 
-Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `comments`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_property_filter`, `row_clear_filter`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
+Actions: `help`, `palette`, `sidebar`, `focus`, `quit`, `new_page` (everywhere); `edit`, `properties`, `todos`, `links`, `comments`, `back`, `forward`, `find`, `find_next`, `find_previous`, `archive`, `reload` (page); `row_new`, `row_sort`, `row_filter`, `row_property_filter`, `row_clear_filter`, `row_view`, `row_reload`, `row_more` (database rows); `tree_reload` (sidebar). Defaults are listed in [config.example.yaml](config.example.yaml).
 
 ### Multiple databases
 
@@ -499,12 +508,6 @@ Special thanks to:
 - **Issues:** [GitHub Issues](https://github.com/Panandika/notion-tui/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/Panandika/notion-tui/discussions)
 - **Documentation:** This README and [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Roadmap
-
-Planned next, roughly in order:
-
-- Saved database views
 
 ---
 

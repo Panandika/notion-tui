@@ -153,3 +153,16 @@ func (m *MockNotionClient) AddComment(_ context.Context, pageID, threadID, text 
 	}
 	return m.ErrorToReturn
 }
+
+// The shared mock has no views: tests of views use the list page's own mock.
+func (m *MockNotionClient) ListViews(context.Context, string) ([]notion.View, error) {
+	return nil, nil
+}
+
+func (m *MockNotionClient) QueryView(context.Context, string) (*notion.ViewRows, error) {
+	return &notion.ViewRows{}, nil
+}
+
+func (m *MockNotionClient) ViewRowsAfter(context.Context, string, string, string) (*notion.ViewRows, error) {
+	return &notion.ViewRows{}, nil
+}

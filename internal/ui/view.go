@@ -56,6 +56,7 @@ var helpSections = []helpSection{
 		{"{row_sort}", "change sort order"},
 		{"{row_filter}", "filter rows by title"},
 		{"{row_property_filter}  {row_clear_filter}", "show only rows with a certain status, select, checkbox or date value; show all rows"},
+		{"{row_view}", "show the rows of a view saved in Notion"},
 		{"{row_reload}", "reload"},
 		{"{row_more}", "load more rows"},
 	}},
