@@ -87,9 +87,6 @@ func (c *Client) ListViews(ctx context.Context, databaseID string) ([]View, erro
 		if viewTypesWithoutRows[out.Type] {
 			continue
 		}
-		if out.Name == "" {
-			out.Name = "Untitled view"
-		}
 		views = append(views, View{ID: id, Name: out.Name, Type: out.Type})
 	}
 	return views, nil

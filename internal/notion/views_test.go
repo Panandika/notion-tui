@@ -32,7 +32,7 @@ func TestListViews(t *testing.T) {
 
 	assert.Equal(t, []View{
 		{ID: "v1", Name: "To Do", Type: "list"},
-		{ID: "v3", Name: "Untitled view", Type: "board"},
+		{ID: "v3", Name: "", Type: "board"},
 	}, views, "a form lists no rows and is left out")
 
 	require.Len(t, *requests, 4)

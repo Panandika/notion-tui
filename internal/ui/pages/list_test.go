@@ -1741,14 +1741,108 @@ func TestListPage_SavedView(t *testing.T) {
 		_, cmd := lp.Update(listKey('m'))
 		feed(lp, cmd)
 
-		view := lp.View()
-		assert.Contains(t, view, "expired")
-		assert.Contains(t, view, "Press r to try again")
+		assert.Equal(t, []string{"3", "9"}, rowIDs(lp), "the rows already loaded stay")
+		require.NoError(t, lp.err)
+		assert.Contains(t, lp.notice, "15 minutes")
+		assert.Contains(t, lp.notice, "reload with r")
+		assert.False(t, lp.HasMore(), "asking again would fail the same way")
 
 		// Reloading runs the view again
 		_, cmd = lp.Update(listKey('r'))
 		feed(lp, cmd)
 		assert.Equal(t, []string{"3", "9"}, rowIDs(lp))
+	})
+
+	t.Run("row IDs match however they are written", func(t *testing.T) {
+		t.Parallel()
+		const dashed, plain = "4169a22b-64ff-80fc-b173-d264f569aaae", "4169A22B64FF80FCB173D264F569AAAE"
+		var fetched []string
+		client := viewClient(&fetched)
+		client.QueryDatabaseFunc = func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			return &notionapi.DatabaseQueryResponse{Results: []notionapi.Page{newTestNotionPage(dashed, "Dashed", "")}}, nil
+		}
+		client.QueryViewFunc = func(context.Context, string) (*notion.ViewRows, error) {
+			return &notion.ViewRows{QueryID: "q1", RowIDs: []string{plain}}, nil
+		}
+		lp := loadedList(t, client, newTestPage("1", "Row 1", ""))
+
+		chooseUrgent(t, lp)
+
+		assert.Equal(t, []string{dashed}, rowIDs(lp))
+		assert.Empty(t, fetched, "the row was among the database's first rows")
+	})
+
+	t.Run("a row that cannot be read is left out, and said so", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		client := viewClient(&fetched)
+		client.GetPageFunc = func(context.Context, string) (*notionapi.Page, error) {
+			return nil, fmt.Errorf("get page: %w", &notionapi.Error{Status: 404, Message: "Could not find page"})
+		}
+		lp := loadedList(t, client, newTestPage("1", "Row 1", ""))
+
+		chooseUrgent(t, lp)
+
+		require.NoError(t, lp.err)
+		assert.Equal(t, []string{"3"}, rowIDs(lp))
+		assert.Contains(t, lp.notice, "1 rows of the view could not be read")
+	})
+
+	t.Run("another failure fails the load", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		client := viewClient(&fetched)
+		client.GetPageFunc = func(context.Context, string) (*notionapi.Page, error) {
+			return nil, errors.New("network down")
+		}
+		lp := loadedList(t, client, newTestPage("1", "Row 1", ""))
+
+		chooseUrgent(t, lp)
+
+		require.Error(t, lp.err)
+		view := lp.View()
+		assert.Contains(t, view, "Showing the view Urgent")
+		assert.Contains(t, view, "Press r to try again")
+	})
+
+	t.Run("reloading keeps the view, and its rows are not saved as the database's", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		pageCache := mustCreateCache(t)
+		lp := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: viewClient(&fetched), Cache: pageCache, DatabaseID: "db-1"})
+		lp.Update(pagesLoadedMsg{pages: []Page{newTestPage("1", "Row 1", "")}})
+		chooseUrgent(t, &lp)
+
+		_, cmd := lp.Update(listKey('r'))
+		feed(&lp, cmd)
+
+		assert.Equal(t, "v-urgent", lp.ShownView().ID)
+		assert.Equal(t, []string{"3", "9"}, rowIDs(&lp))
+		_, _, saved := lp.savedRows(context.Background())
+		assert.False(t, saved, "a view's rows are not the database's rows")
+	})
+
+	t.Run("a slow answer is not taken by the list of another database", func(t *testing.T) {
+		t.Parallel()
+		var fetched []string
+		first := loadedList(t, viewClient(&fetched), newTestPage("1", "Row 1", ""))
+		_, cmd := first.Update(listKey('v'))
+		feed(first, cmd)
+		first.Update(listKey('j'))
+		_, slow := first.Update(listEnter()) // Still loading when the user switches
+
+		other := NewListPage(NewListPageInput{Width: 100, Height: 30, NotionClient: &MockNotionClient{
+			QueryDatabaseFunc: func(context.Context, string, *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+				return &notionapi.DatabaseQueryResponse{Results: []notionapi.Page{newTestNotionPage("b1", "Other", "")}}, nil
+			},
+		}, DatabaseID: "db-2"})
+		// Both lists have loaded once: counted per list, the two loads
+		// would carry the same number
+		feed(&other, other.Init())
+
+		feed(&other, slow)
+
+		assert.Equal(t, []string{"b1"}, rowIDs(&other))
 	})
 
 	t.Run("the clear key shows every row again", func(t *testing.T) {

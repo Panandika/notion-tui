@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -74,6 +75,7 @@ type pagesLoadedMsg struct {
 	// and the rows already known, so they need not be fetched again.
 	viewQueryID string
 	viewKnown   map[string]Page
+	skipped     int // Rows of the view that could not be read
 }
 
 // rowCreatedMsg is the result of creating a new row.
@@ -111,6 +113,11 @@ func (s rowSort) String() string {
 		return "Notion order"
 	}
 }
+
+// loadCounter numbers every load of rows in the app. A row list is rebuilt
+// when the user switches database, so numbers of its own would start over
+// and a slow answer for the old list could pass for one of the new.
+var loadCounter atomic.Int64
 
 // summaryProperties is how many property values a row shows under its title.
 const summaryProperties = 3
@@ -255,6 +262,19 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.epoch != lp.epoch {
 			return lp, nil
 		}
+		if msg.err != nil && msg.more {
+			// The rows on screen are still good: say what went wrong and
+			// leave them. "Load more" can be tried again.
+			lp.loadingMore = false
+			lp.statusBar.SetSyncStatus(components.StatusError)
+			lp.notice = "Could not load more rows: " + msg.err.Error()
+			if errors.Is(msg.err, errViewExpired) {
+				lp.hasMore = false
+				lp.notice = lp.keys.Label("Notion keeps a view's rows for 15 minutes: reload with {row_reload} to load more")
+			}
+			lp.updateStatusBarFromSidebar()
+			return lp, nil
+		}
 		if msg.err != nil {
 			lp.loading = false
 			lp.loadingMore = false
@@ -281,7 +301,10 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lp.hasMore = msg.hasMore
 		lp.nextCursor = msg.nextCursor
 		if !msg.more {
-			lp.viewQueryID, lp.viewKnown = msg.viewQueryID, msg.viewKnown
+			lp.viewQueryID = msg.viewQueryID
+		}
+		if !msg.more || msg.viewKnown != nil {
+			lp.viewKnown = msg.viewKnown
 		}
 		lp.updateSidebarItems()
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
@@ -293,6 +316,9 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.offline {
 			lp.statusBar.SetMode(components.ModeOffline)
 			lp.notice = lp.keys.Label("Offline: these are the rows saved " + components.HumanAge(msg.age) + " ago | {row_reload}: try again")
+		}
+		if msg.skipped > 0 {
+			lp.notice = fmt.Sprintf("%d rows of the view could not be read and are left out", msg.skipped)
 		}
 		lp.updateStatusBarFromSidebar()
 		return lp, nil
@@ -750,6 +776,10 @@ func (lp *ListPage) startViews() tea.Cmd {
 		for i := range views {
 			// Names are the user's text, and are drawn as they are
 			views[i].Name = oneLine(views[i].Name)
+			if views[i].Name == "" {
+				views[i].Name = "Untitled view"
+			}
+			views[i].Type = oneLine(views[i].Type)
 		}
 		return viewsLoadedMsg{databaseID: databaseID, views: views, err: err}
 	}
@@ -775,6 +805,7 @@ func (lp *ListPage) openViewPicker() {
 func (lp *ListPage) applyView(view notion.View) tea.Cmd {
 	lp.view = view
 	lp.filter = notion.RowFilter{}
+	lp.offline = false // A view is never shown from a saved copy
 	lp.sidebar.SetTitle("Pages in the view " + view.Name)
 	lp.loading = true
 	lp.hasMore = false
@@ -828,13 +859,14 @@ func (lp *ListPage) viewRowsCmd(epoch int) tea.Cmd {
 				known[rowKey(row.ID)] = row
 			}
 		}
-		rows, known, err := viewRows(ctx, client, result.RowIDs, known)
+		rows, known, skipped, err := viewRows(ctx, client, result.RowIDs, known)
 		if err != nil {
 			return pagesLoadedMsg{epoch: epoch, err: fmt.Errorf("fetch pages: %w", err)}
 		}
 		return pagesLoadedMsg{
-			epoch: epoch, pages: rows,
-			hasMore: result.HasMore && result.NextCursor != "", nextCursor: result.NextCursor,
+			epoch: epoch, pages: rows, skipped: skipped,
+			// Later pages are asked for by the result's ID
+			hasMore: result.HasMore && result.NextCursor != "" && result.QueryID != "", nextCursor: result.NextCursor,
 			viewQueryID: result.QueryID, viewKnown: known,
 		}
 	}
@@ -842,33 +874,46 @@ func (lp *ListPage) viewRowsCmd(epoch int) tea.Cmd {
 
 // viewRows turns the row IDs of a view into rows, in the same order. A
 // row not in known is fetched; the returned map is known plus those rows,
-// as a new map, since known may be in use elsewhere.
-func viewRows(ctx context.Context, client NotionClient, ids []string, known map[string]Page) ([]Page, map[string]Page, error) {
-	all := make(map[string]Page, len(known)+len(ids))
+// as a new map, since known may be in use elsewhere. A row Notion will
+// not hand out (not shared with the connection, or gone since the view
+// ran) is left out and counted in skipped.
+func viewRows(ctx context.Context, client NotionClient, ids []string, known map[string]Page) (rows []Page, all map[string]Page, skipped int, err error) {
+	all = make(map[string]Page, len(known)+len(ids))
 	for key, row := range known {
 		all[key] = row
 	}
-	rows := make([]Page, 0, len(ids))
+	rows = make([]Page, 0, len(ids))
 	for _, id := range ids {
 		row, ok := all[rowKey(id)]
 		if !ok {
 			page, err := client.GetPage(ctx, id)
+			var apiErr *notionapi.Error
+			if errors.As(err, &apiErr) && (apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusForbidden) {
+				skipped++
+				continue
+			}
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
 			row = rowFromPage(page)
 			all[rowKey(id)] = row
 		}
 		rows = append(rows, row)
 	}
-	return rows, all, nil
+	return rows, all, skipped, nil
 }
+
+// errViewExpired says Notion no longer has the rows it prepared for a view.
+var errViewExpired = errors.New("the rows Notion prepared for this view have expired")
 
 // viewMoreCmd loads the next page of the rows of the view in effect.
 func (lp *ListPage) viewMoreCmd() tea.Cmd {
 	client, view, epoch := lp.notionClient, lp.view, lp.epoch
 	queryID, cursor, known := lp.viewQueryID, lp.nextCursor, lp.viewKnown
 	return func() tea.Msg {
+		if client == nil {
+			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("notion client not initialized")}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), viewTimeout)
 		defer cancel()
 
@@ -877,16 +922,16 @@ func (lp *ListPage) viewMoreCmd() tea.Cmd {
 			var apiErr *notionapi.Error
 			if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
 				// Notion keeps the rows of a view for 15 minutes
-				err = errors.New("the rows Notion prepared for this view have expired")
+				err = errViewExpired
 			}
 			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("fetch more pages: %w", err)}
 		}
-		rows, _, err := viewRows(ctx, client, result.RowIDs, known)
+		rows, known, skipped, err := viewRows(ctx, client, result.RowIDs, known)
 		if err != nil {
 			return pagesLoadedMsg{more: true, epoch: epoch, err: fmt.Errorf("fetch more pages: %w", err)}
 		}
 		return pagesLoadedMsg{
-			more: true, epoch: epoch, pages: rows,
+			more: true, epoch: epoch, pages: rows, skipped: skipped, viewKnown: known,
 			hasMore: result.HasMore && result.NextCursor != "", nextCursor: result.NextCursor,
 		}
 	}
@@ -927,7 +972,7 @@ func (lp *ListPage) Refresh() tea.Cmd {
 func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	// A fresh first page starts a new list: anything still loading for the
 	// old one no longer applies.
-	lp.epoch++
+	lp.epoch = int(loadCounter.Add(1))
 	lp.loadingMore = false
 	lp.nextCursor = ""
 	filter, epoch, now := lp.filter, lp.epoch, lp.now
