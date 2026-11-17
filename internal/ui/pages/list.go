@@ -131,7 +131,34 @@ type ListPage struct {
 	prompting bool
 	creating  bool
 	notice    string // Result of the last action, shown in the status bar
+
+	// Filtering rows by a property value
+	filter        notion.RowFilter        // Applied by Notion to every load
+	filterStage   filterStage             // Which picker is open, if any
+	filterChoices []notion.FilterProperty // What the open picker chooses from
+	filterProp    int                     // Property chosen in the first picker
+	picker        components.Picker
+	now           func() time.Time // Clock for date conditions
 }
+
+// filterStage is a step of choosing a property filter.
+type filterStage int
+
+const (
+	filterOff       filterStage = iota
+	filterLoading               // Waiting for the database's properties
+	filterProperty              // Choosing the property
+	filterCondition             // Choosing the condition for it
+)
+
+// filterSchemaMsg carries the properties rows can be filtered by.
+type filterSchemaMsg struct {
+	databaseID string
+	properties []notion.FilterProperty
+	err        error
+}
+
+func (filterSchemaMsg) listResult() {}
 
 // NewListPageInput contains the parameters for creating a new ListPage.
 type NewListPageInput struct {
@@ -181,6 +208,7 @@ func NewListPage(input NewListPageInput) ListPage {
 		cache:        input.Cache,
 		databaseID:   input.DatabaseID,
 		readOnly:     input.ReadOnly,
+		now:          time.Now,
 		keys:         input.Keys,
 	}
 }
@@ -239,6 +267,24 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return NewNavigationMsg(msg.ID)
 		}
 
+	case filterSchemaMsg:
+		if msg.databaseID != lp.databaseID || lp.filterStage != filterLoading {
+			return lp, nil // The user moved on before the answer came
+		}
+		lp.filterStage = filterOff
+		switch {
+		case msg.err != nil:
+			lp.notice = "Could not load the properties: " + msg.err.Error()
+		case len(msg.properties) == 0:
+			lp.notice = "This database has no status, select, checkbox or date property to filter by"
+		default:
+			lp.filterChoices = msg.properties
+			lp.openPropertyPicker()
+			return lp, nil
+		}
+		lp.updateStatusBarFromSidebar()
+		return lp, nil
+
 	case rowCreatedMsg:
 		lp.creating = false
 		if msg.err != nil {
@@ -256,6 +302,9 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if lp.prompting {
 			return lp, lp.updatePrompt(msg)
 		}
+		if lp.filterStage != filterOff {
+			return lp, lp.updateFilterPicker(msg)
+		}
 		// While the filter is being typed, letters are filter text
 		if lp.CapturesInput() {
 			break
@@ -264,6 +313,15 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "n":
 			return lp, lp.startNewRow()
+
+		case "p":
+			return lp, lp.startPropertyFilter()
+
+		case "P":
+			if lp.filter.Active() {
+				return lp, lp.applyFilter(notion.RowFilter{})
+			}
+			return lp, nil
 
 		case "s":
 			lp.sort = (lp.sort + 1) % 3
@@ -351,6 +409,21 @@ func (lp *ListPage) View() string {
 	}
 
 	status := lp.statusBar.View()
+
+	if lp.filterStage == filterProperty || lp.filterStage == filterCondition {
+		return lipgloss.JoinVertical(lipgloss.Left, lp.picker.View(lp.width, lp.height-1), status)
+	}
+
+	if len(lp.pageList) == 0 && lp.filter.Active() {
+		emptyStyle := lipgloss.NewStyle().
+			Width(lp.width).
+			Height(lp.height-1).
+			Align(lipgloss.Center, lipgloss.Center).
+			Foreground(lipgloss.Color("#6B7280"))
+		text := fmt.Sprintf("No rows where %s.", lp.filter.Label) +
+			lp.keys.Label(" Press {row_clear_filter} to show all rows")
+		return lipgloss.JoinVertical(lipgloss.Left, emptyStyle.Render(text), status)
+	}
 
 	if len(lp.pageList) == 0 {
 		emptyStyle := lipgloss.NewStyle().
@@ -461,11 +534,105 @@ func listHeight(pageHeight int) int {
 // InMode reports whether the new-row prompt is open. The root model keeps
 // the command palette closed then.
 func (lp *ListPage) InMode() bool {
-	return lp.prompting
+	return lp.prompting || lp.filterStage != filterOff
 }
 
 func (lp *ListPage) CapturesInput() bool {
-	return lp.prompting || lp.sidebar.FilterState() == list.Filtering
+	return lp.prompting || lp.filterStage != filterOff || lp.sidebar.FilterState() == list.Filtering
+}
+
+// startPropertyFilter loads the database's properties and then offers
+// them to filter the rows by.
+func (lp *ListPage) startPropertyFilter() tea.Cmd {
+	if lp.loading || lp.creating || lp.notionClient == nil {
+		return nil
+	}
+	lp.filterStage = filterLoading
+	lp.statusBar.SetHelpText("Loading properties... | esc: cancel")
+
+	client, databaseID, now := lp.notionClient, lp.databaseID, lp.now
+	return func() tea.Msg {
+		database, err := client.GetDatabase(context.Background(), databaseID)
+		if err != nil {
+			return filterSchemaMsg{databaseID: databaseID, err: err}
+		}
+		return filterSchemaMsg{databaseID: databaseID, properties: notion.FilterProperties(database, now())}
+	}
+}
+
+func (lp *ListPage) openPropertyPicker() {
+	items := make([]components.PickerItem, len(lp.filterChoices))
+	for i, property := range lp.filterChoices {
+		items[i] = components.PickerItem{Label: property.Name, Detail: string(property.Type)}
+	}
+	lp.picker = components.NewPicker("Show only rows where...", items)
+	lp.picker.SetCursor(lp.filterProp)
+	lp.filterStage = filterProperty
+	lp.statusBar.SetHelpText("↑/↓: move | enter: choose | esc: cancel")
+}
+
+func (lp *ListPage) openConditionPicker() {
+	property := lp.filterChoices[lp.filterProp]
+	items := make([]components.PickerItem, len(property.Choices))
+	cursor := 0
+	for i, choice := range property.Choices {
+		items[i] = components.PickerItem{Label: choice.Choice}
+		if choice.Label == lp.filter.Label {
+			cursor = i
+		}
+	}
+	lp.picker = components.NewPicker(property.Name+"...", items)
+	lp.picker.SetCursor(cursor)
+	lp.filterStage = filterCondition
+	lp.statusBar.SetHelpText("↑/↓: move | enter: apply | esc: back")
+}
+
+// updateFilterPicker handles a key while a filter picker is open.
+func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
+	if lp.filterStage == filterLoading {
+		if msg.String() == "esc" {
+			lp.filterStage = filterOff
+			lp.updateStatusBarFromSidebar()
+		}
+		return nil
+	}
+	if lp.picker.HandleKey(msg) {
+		return nil
+	}
+	switch msg.String() {
+	case "esc":
+		if lp.filterStage == filterCondition {
+			lp.openPropertyPicker()
+			return nil
+		}
+		lp.filterStage = filterOff
+		lp.updateStatusBarFromSidebar()
+	case "enter":
+		if lp.filterStage == filterProperty {
+			lp.filterProp = lp.picker.Cursor()
+			lp.openConditionPicker()
+			return nil
+		}
+		lp.filterStage = filterOff
+		return lp.applyFilter(lp.filterChoices[lp.filterProp].Choices[lp.picker.Cursor()])
+	}
+	return nil
+}
+
+// applyFilter reloads the rows with a filter, or without one for the zero
+// value.
+func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
+	lp.filter = filter
+	lp.loading = true
+	lp.hasMore = false
+	lp.statusBar.SetSyncStatus(components.StatusSyncing)
+	lp.statusBar.SetHelpText("Loading rows...")
+	return lp.fetchPagesCmd()
+}
+
+// Filter returns the property filter in effect.
+func (lp *ListPage) Filter() notion.RowFilter {
+	return lp.filter
 }
 
 // SetPages updates the page list and sidebar items.
@@ -495,6 +662,7 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 	lp.epoch++
 	lp.loadingMore = false
 	lp.nextCursor = ""
+	filter := lp.filter
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -504,7 +672,7 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 			}
 		}
 
-		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, nil)
+		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, filter.Query(""))
 		if err != nil {
 			return pagesLoadedMsg{
 				err: fmt.Errorf("fetch pages: %w", err),
@@ -528,6 +696,7 @@ func (lp *ListPage) fetchPagesCmd() tea.Cmd {
 func (lp *ListPage) loadMoreCmd() tea.Cmd {
 	epoch := lp.epoch
 	cursor := lp.nextCursor
+	filter := lp.filter
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -545,10 +714,8 @@ func (lp *ListPage) loadMoreCmd() tea.Cmd {
 			}
 		}
 
-		// Create pagination request with the next cursor
-		req := &notionapi.DatabaseQueryRequest{
-			StartCursor: notionapi.Cursor(cursor),
-		}
+		// The next page of the same, possibly filtered, list
+		req := filter.Query(cursor)
 
 		resp, err := lp.notionClient.QueryDatabase(ctx, lp.databaseID, req)
 		if err != nil {
@@ -754,7 +921,14 @@ func (lp *ListPage) updateStatusBarFromSidebar() {
 		lp.statusBar.SetHelpText(lp.notice)
 	case !lp.loading && !lp.loadingMore:
 		helpText := fmt.Sprintf("%d pages | enter: open | ", len(lp.pageList)) +
-			lp.keys.Label(fmt.Sprintf("{row_new}: new | {row_sort}: sort (%s) | {row_filter}: filter | {row_reload}: refresh", lp.sort))
+			lp.keys.Label(fmt.Sprintf("{row_new}: new | {row_sort}: sort (%s) | {row_filter}: filter | {row_property_filter}: by property | {row_reload}: refresh", lp.sort))
+		if lp.filter.Active() {
+			// The filter comes first: it explains why rows are missing.
+			// Its label holds property and option names, which are the
+			// user's, so only the hints go through Label.
+			helpText = fmt.Sprintf("%d pages where %s", len(lp.pageList), lp.filter.Label) +
+				lp.keys.Label(" | {row_clear_filter}: show all | {row_property_filter}: change | enter: open")
+		}
 		if lp.hasMore {
 			helpText += lp.keys.Label(" | {row_more}: load more")
 		}

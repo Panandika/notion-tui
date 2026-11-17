@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -26,6 +27,7 @@ type MockNotionClient struct {
 	SearchFunc        func(ctx context.Context, input notion.SearchInput) (*notion.SearchResponse, error)
 
 	CreatePageMarkdownFunc func(ctx context.Context, parent notion.PageParent, markdown string) (*notion.CreatedPage, error)
+	GetDatabaseFunc        func(ctx context.Context, id string) (*notionapi.Database, error)
 }
 
 func (m *MockNotionClient) QueryDatabase(ctx context.Context, id string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
@@ -69,7 +71,10 @@ func (m *MockNotionClient) CreatePageMarkdown(ctx context.Context, parent notion
 	return nil, errors.New("not implemented")
 }
 
-func (m *MockNotionClient) GetDatabase(context.Context, string) (*notionapi.Database, error) {
+func (m *MockNotionClient) GetDatabase(ctx context.Context, id string) (*notionapi.Database, error) {
+	if m.GetDatabaseFunc != nil {
+		return m.GetDatabaseFunc(ctx, id)
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -1353,4 +1358,160 @@ func TestListPage_NewRowPromptIsVisibleInAnEmptyDatabase(t *testing.T) {
 	view := lp.View()
 	assert.Contains(t, view, "New row title: First", "the user must see what they type")
 	assert.LessOrEqual(t, lipgloss.Height(view), 20)
+}
+
+func filterClient(queries *[]*notionapi.DatabaseQueryRequest) *MockNotionClient {
+	return &MockNotionClient{
+		GetDatabaseFunc: func(context.Context, string) (*notionapi.Database, error) {
+			return &notionapi.Database{Properties: notionapi.PropertyConfigs{
+				"Name":   &notionapi.TitlePropertyConfig{},
+				"Done":   &notionapi.CheckboxPropertyConfig{},
+				"Status": &notionapi.StatusPropertyConfig{Status: notionapi.StatusConfig{Options: []notionapi.Option{{Name: "Todo"}, {Name: "Done"}}}},
+			}}, nil
+		},
+		QueryDatabaseFunc: func(_ context.Context, _ string, req *notionapi.DatabaseQueryRequest) (*notionapi.DatabaseQueryResponse, error) {
+			*queries = append(*queries, req)
+			return &notionapi.DatabaseQueryResponse{HasMore: true, NextCursor: "next"}, nil
+		},
+	}
+}
+
+// feed runs a command and gives every message it produces back to the page.
+func feed(lp *ListPage, cmd tea.Cmd) {
+	for _, msg := range collectMsgs(cmd) {
+		if _, isList := msg.(ListResultMsg); isList {
+			lp.Update(msg)
+		}
+	}
+}
+
+func listEnter() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyEnter} }
+func listEsc() tea.KeyMsg   { return tea.KeyMsg{Type: tea.KeyEsc} }
+
+func TestListPage_PropertyFilter(t *testing.T) {
+	t.Parallel()
+
+	// chooseStatusDone opens the pickers and picks "Status is Done".
+	chooseStatusDone := func(t *testing.T, lp *ListPage) {
+		t.Helper()
+		_, cmd := lp.Update(listKey('p'))
+		feed(lp, cmd)
+		require.True(t, lp.InMode(), "the property picker is open")
+		require.Contains(t, lp.View(), "Status")
+		_, cmd = lp.Update(listEnter()) // Status is listed first
+		require.Nil(t, cmd)
+		require.Contains(t, lp.View(), "is Todo")
+		lp.Update(listKey('j')) // is Done
+		_, cmd = lp.Update(listEnter())
+		feed(lp, cmd)
+	}
+
+	t.Run("Notion is asked for the matching rows only", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+
+		chooseStatusDone(t, lp)
+
+		require.Len(t, queries, 1)
+		raw, err := json.Marshal(queries[0])
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"filter":{"property":"Status","status":{"equals":"Done"}}}`, string(raw))
+		assert.False(t, lp.InMode())
+		assert.Equal(t, "Status is Done", lp.Filter().Label)
+		assert.Contains(t, lp.View(), "No rows where Status is Done", "an empty result says why")
+	})
+
+	t.Run("loading more and reloading keep the filter", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		chooseStatusDone(t, lp)
+
+		_, cmd := lp.Update(listKey('m'))
+		feed(lp, cmd)
+		_, cmd = lp.Update(listKey('r'))
+		feed(lp, cmd)
+
+		require.Len(t, queries, 3)
+		assert.Equal(t, notionapi.Cursor("next"), queries[1].StartCursor)
+		for i, query := range queries {
+			assert.NotNil(t, query.Filter, "query %d", i)
+		}
+	})
+
+	t.Run("the clear key shows every row again", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		chooseStatusDone(t, lp)
+
+		_, cmd := lp.Update(listKey('P'))
+		feed(lp, cmd)
+
+		require.Len(t, queries, 2)
+		assert.Nil(t, queries[1], "a plain query")
+		assert.False(t, lp.Filter().Active())
+
+		_, cmd = lp.Update(listKey('P'))
+		assert.Nil(t, cmd, "nothing to clear, nothing reloaded")
+	})
+
+	t.Run("esc steps back, then out, without changing the rows", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		_, cmd := lp.Update(listKey('p'))
+		feed(lp, cmd)
+		lp.Update(listKey('j')) // Done (checkbox)
+		lp.Update(listEnter())
+		require.Contains(t, lp.View(), "is checked")
+
+		lp.Update(listEsc())
+		assert.Contains(t, lp.View(), "Show only rows where", "back at the properties")
+		lp.Update(listEsc())
+
+		assert.False(t, lp.InMode())
+		assert.Empty(t, queries)
+		assert.False(t, lp.Filter().Active())
+	})
+
+	t.Run("letters do nothing while a picker is open", func(t *testing.T) {
+		t.Parallel()
+		var queries []*notionapi.DatabaseQueryRequest
+		lp := loadedList(t, filterClient(&queries), newTestPage("1", "One", ""))
+		_, cmd := lp.Update(listKey('p'))
+		feed(lp, cmd)
+
+		_, cmd = lp.Update(listKey('n'))
+
+		assert.Nil(t, cmd)
+		assert.True(t, lp.CapturesInput())
+		assert.Contains(t, lp.View(), "Show only rows where", "no new-row prompt took over")
+	})
+
+	t.Run("a database with nothing to filter by says so", func(t *testing.T) {
+		t.Parallel()
+		client := &MockNotionClient{GetDatabaseFunc: func(context.Context, string) (*notionapi.Database, error) {
+			return &notionapi.Database{Properties: notionapi.PropertyConfigs{"Name": &notionapi.TitlePropertyConfig{}}}, nil
+		}}
+		lp := loadedList(t, client, newTestPage("1", "One", ""))
+
+		_, cmd := lp.Update(listKey('p'))
+		feed(lp, cmd)
+
+		assert.False(t, lp.InMode())
+		assert.Contains(t, lp.View(), "no status, select, checkbox or date property")
+	})
+
+	t.Run("a failed load of the properties is reported", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, newTestPage("1", "One", ""))
+
+		_, cmd := lp.Update(listKey('p'))
+		feed(lp, cmd)
+
+		assert.False(t, lp.InMode())
+		assert.Contains(t, lp.View(), "Could not load the properties")
+	})
 }
