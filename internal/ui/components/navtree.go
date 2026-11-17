@@ -258,9 +258,20 @@ func (t *NavTree) KeepStateOf(old *NavTree) {
 	t.rebuildVisible()
 
 	t.selectedIdx = 0
-	if selected := old.Selected(); selected != nil {
-		t.SelectByID(selected.ID)
+	selected := old.Selected()
+	if selected == nil || t.SelectByID(selected.ID) {
+		return
 	}
+	// The item is now inside a closed parent: stay on the nearest one shown
+	node := t.nodeMap[selected.ID]
+	for depth := 0; node != nil && depth < len(t.nodeMap); depth++ {
+		if t.SelectByID(node.ID) {
+			return
+		}
+		node = t.nodeMap[node.ParentID]
+	}
+	// The item is gone: stay on the same row rather than jump to the top
+	t.selectedIdx = max(0, min(old.selectedIdx, len(t.visible)-1))
 }
 
 // ExpandAll expands all nodes in the tree.

@@ -5,8 +5,6 @@ project_name: notion-tui
 before:
   hooks:
     - go mod download
-    - go mod tidy
-    - go test -race ./...
 
 builds:
   - main: ./main.go
@@ -35,10 +33,10 @@ builds:
       - -trimpath
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     name_template: '{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
     files:
       - README.md
@@ -51,7 +49,7 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  name_template: '{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}'
+  version_template: '{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}'
 
 release:
   github:

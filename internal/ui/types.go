@@ -111,24 +111,3 @@ func NewPage(id PageID, title string, status string, updatedAt time.Time) Page {
 func (p Page) IsEmpty() bool {
 	return p.ID.IsEmpty()
 }
-
-// Block represents a content block in a Notion page.
-type Block struct {
-	ID      string
-	Type    string
-	Content string
-}
-
-// NewBlock creates a new Block instance.
-func NewBlock(id string, blockType string, content string) Block {
-	return Block{
-		ID:      id,
-		Type:    blockType,
-		Content: content,
-	}
-}
-
-// IsEmpty returns true if the Block has no ID.
-func (b Block) IsEmpty() bool {
-	return b.ID == ""
-}

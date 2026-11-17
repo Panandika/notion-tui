@@ -222,54 +222,6 @@ func TestNewPage(t *testing.T) {
 	assert.Equal(t, updatedAt, page.UpdatedAt)
 }
 
-func TestBlock(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		block         Block
-		expectedEmpty bool
-	}{
-		{
-			name:          "Valid block",
-			block:         NewBlock("block-123", "paragraph", "This is content"),
-			expectedEmpty: false,
-		},
-		{
-			name:          "Block with empty ID",
-			block:         NewBlock("", "heading", "Title"),
-			expectedEmpty: true,
-		},
-		{
-			name:          "Block with empty content",
-			block:         NewBlock("block-456", "divider", ""),
-			expectedEmpty: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expectedEmpty, tt.block.IsEmpty())
-		})
-	}
-}
-
-func TestNewBlock(t *testing.T) {
-	t.Parallel()
-
-	id := "block-abc-123"
-	blockType := "paragraph"
-	content := "This is a paragraph of text."
-
-	block := NewBlock(id, blockType, content)
-
-	assert.Equal(t, id, block.ID)
-	assert.Equal(t, blockType, block.Type)
-	assert.Equal(t, content, block.Content)
-}
-
 func TestViewModeConstants(t *testing.T) {
 	t.Parallel()
 

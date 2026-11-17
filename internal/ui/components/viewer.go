@@ -10,9 +10,6 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/jomei/notionapi"
-
-	"github.com/Panandika/notion-tui/internal/notion"
 )
 
 // ContentLoadedMsg contains loaded content or error.
@@ -123,7 +120,6 @@ type ViewerInterface interface {
 	Init() tea.Cmd
 	Update(tea.Msg) (ViewerInterface, tea.Cmd)
 	View() string
-	SetBlocks([]notionapi.Block) tea.Cmd
 	SetMarkdown(markdown string) tea.Cmd
 	SetSize(width, height int)
 	// Find looks for text in the shown content, jumps to the first match
@@ -212,21 +208,6 @@ func (pv PageViewer) View() string {
 	}
 
 	return boxStyle.Render(pv.viewport.View())
-}
-
-// SetBlocks converts Notion blocks to markdown and renders them.
-// Returns a command that performs the conversion asynchronously.
-// Following the Bubble Tea pattern of non-blocking Update().
-func (pv PageViewer) SetBlocks(blocks []notionapi.Block) tea.Cmd {
-	width := pv.width
-	return func() tea.Msg {
-		// Convert blocks to markdown
-		markdown, err := notion.ConvertBlocksToMarkdown(blocks)
-		if err != nil {
-			return ErrorMsg{message: "failed to convert blocks", err: err}
-		}
-		return renderMarkdown(markdown, width)
-	}
 }
 
 // SetMarkdown renders Markdown text into the viewer.
@@ -327,7 +308,7 @@ func (pv *PageViewer) FindNext(delta int) (position, total int) {
 }
 
 // SetContent directly sets the viewport content.
-// Use this for pre-rendered content, or SetBlocks for Notion blocks.
+// Use this for pre-rendered content, or SetMarkdown for Markdown text.
 func (pv *PageViewer) SetContent(content string) {
 	pv.content = content
 	pv.viewport.SetContent(content)

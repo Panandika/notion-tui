@@ -110,35 +110,6 @@ func (c *Client) QueryDatabase(ctx context.Context, id string,
 	return resp, nil
 }
 
-// GetBlocks retrieves child blocks of a page or block.
-func (c *Client) GetBlocks(ctx context.Context, id string,
-	pagination *notionapi.Pagination) (*notionapi.GetChildrenResponse, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-	blocks, err := c.api.Block.GetChildren(ctx, notionapi.BlockID(id), pagination)
-	if err != nil {
-		return nil, fmt.Errorf("get blocks for %s: %w", id, err)
-	}
-	return blocks, nil
-}
-
-// AppendBlocks appends blocks to a page or block.
-func (c *Client) AppendBlocks(ctx context.Context, id string,
-	req *notionapi.AppendBlockChildrenRequest) (*notionapi.AppendBlockChildrenResponse, error) {
-	if err := c.writable(); err != nil {
-		return nil, err
-	}
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-	resp, err := c.api.Block.AppendChildren(ctx, notionapi.BlockID(id), req)
-	if err != nil {
-		return nil, fmt.Errorf("append blocks to %s: %w", id, err)
-	}
-	return resp, nil
-}
-
 // UpdatePage updates a page's properties.
 func (c *Client) UpdatePage(ctx context.Context, id string,
 	req *notionapi.PageUpdateRequest) (*notionapi.Page, error) {
@@ -153,49 +124,6 @@ func (c *Client) UpdatePage(ctx context.Context, id string,
 		return nil, fmt.Errorf("update page %s: %w", id, err)
 	}
 	return page, nil
-}
-
-// DeleteBlock archives a block (Notion API soft-deletes via archive).
-func (c *Client) DeleteBlock(ctx context.Context, id string) (notionapi.Block, error) {
-	if err := c.writable(); err != nil {
-		return nil, err
-	}
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-	block, err := c.api.Block.Delete(ctx, notionapi.BlockID(id))
-	if err != nil {
-		return nil, fmt.Errorf("delete block %s: %w", id, err)
-	}
-	return block, nil
-}
-
-// GetBlock retrieves a single block by ID.
-func (c *Client) GetBlock(ctx context.Context, id string) (notionapi.Block, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-	block, err := c.api.Block.Get(ctx, notionapi.BlockID(id))
-	if err != nil {
-		return nil, fmt.Errorf("get block %s: %w", id, err)
-	}
-	return block, nil
-}
-
-// UpdateBlock updates a block's properties.
-func (c *Client) UpdateBlock(ctx context.Context, id string,
-	req *notionapi.BlockUpdateRequest) (notionapi.Block, error) {
-	if err := c.writable(); err != nil {
-		return nil, err
-	}
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-	block, err := c.api.Block.Update(ctx, notionapi.BlockID(id), req)
-	if err != nil {
-		return nil, fmt.Errorf("update block %s: %w", id, err)
-	}
-	return block, nil
 }
 
 // Search performs a workspace-wide search using Notion Search API.
