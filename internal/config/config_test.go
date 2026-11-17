@@ -382,3 +382,34 @@ func TestValidate_Theme(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `theme "solarized" is not known`)
 }
+
+func TestResolveCacheDir(t *testing.T) {
+	t.Parallel()
+
+	home := func() (string, error) { return "/home/ada", nil }
+	noHome := func() (string, error) { return "", errors.New("no home") }
+
+	tests := []struct {
+		name       string
+		configured string
+		homeDir    func() (string, error)
+		want       string
+	}{
+		{"nothing configured", "", home, "/home/ada/.cache/notion-tui"},
+		{"absolute path", "/var/cache/ntui", home, "/var/cache/ntui"},
+		{"relative path is left alone", "cache", home, "cache"},
+		{"tilde", "~/.cache/custom", home, "/home/ada/.cache/custom"},
+		{"tilde alone", "~", home, "/home/ada"},
+		{"a name that only starts with a tilde", "~cache", home, "~cache"},
+		{"no home and nothing configured: no cache", "", noHome, ""},
+		{"turned off", "off", home, ""},
+		{"turned off, any case", " OFF ", home, ""},
+		{"no home but a directory was named", "/tmp/c", noHome, "/tmp/c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, resolveCacheDir(tt.configured, tt.homeDir))
+		})
+	}
+}

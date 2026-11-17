@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -18,6 +19,21 @@ import (
 type workspaceTreeMsg struct {
 	tree *components.NavTree
 	err  error
+	// offline marks a tree built from what was saved earlier, because
+	// Notion could not be reached; age is how long ago that was.
+	offline bool
+	age     time.Duration
+}
+
+// Cache entry holding the workspace tree for use without a connection.
+const (
+	treeCacheKey    = "workspace-tree"
+	treeCacheFormat = "tree-v1"
+)
+
+type savedTree struct {
+	Format  string                `json:"format"`
+	Results []notion.SearchResult `json:"results"`
 }
 
 // AppModel represents the root TUI orchestrator that manages pages and global components.
@@ -68,6 +84,14 @@ type AppModel struct {
 
 	// reloadingTree is set while a tree reload the user asked for runs
 	reloadingTree bool
+}
+
+// onlineMode is what the status bar shows when Notion can be reached.
+func (m *AppModel) onlineMode() string {
+	if m.config.ReadOnly {
+		return modeReadOnly
+	}
+	return components.ModeBrowse
 }
 
 // modeReadOnly is shown in the status bar while changes are turned off.
@@ -186,7 +210,18 @@ func (m *AppModel) fetchWorkspaceTreeCmd() tea.Cmd {
 			PageSize: 100,
 		})
 		if err != nil {
+			// Without a connection, show the workspace as last seen
+			var saved savedTree
+			if m.cache != nil && notion.IsOffline(err) {
+				if age, _, loadErr := m.cache.Load(ctx, treeCacheKey, &saved); loadErr == nil && saved.Format == treeCacheFormat {
+					tree := components.BuildNavTree(components.BuildNavTreeInput{Results: saved.Results})
+					return workspaceTreeMsg{tree: tree, offline: true, age: age}
+				}
+			}
 			return workspaceTreeMsg{err: fmt.Errorf("fetch workspace: %w", err)}
+		}
+		if m.cache != nil {
+			_ = m.cache.Set(ctx, cache.SetInput{PageID: treeCacheKey, Data: savedTree{Format: treeCacheFormat, Results: resp.Results}})
 		}
 
 		// Build tree from results
@@ -307,6 +342,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The reload the user asked for is over
 			m.reloadingTree = false
 			m.statusBar.SetHelpText(m.keys.Label("{help} for help"))
+		}
+		// The badge at the bottom says whether Notion can be reached
+		switch {
+		case msg.offline:
+			m.statusBar.SetMode(components.ModeOffline)
+			m.statusBar.SetHelpText("Offline: workspace as saved " + components.HumanAge(msg.age) + " ago")
+		case msg.err == nil:
+			m.statusBar.SetMode(m.onlineMode())
 		}
 		return m, nil
 

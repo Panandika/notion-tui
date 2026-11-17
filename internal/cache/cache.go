@@ -81,6 +81,39 @@ func (c *PageCache) Get(ctx context.Context, pageID string) (interface{}, error)
 	return result, nil
 }
 
+// Load reads what was stored under a key into out, however old it is. age
+// says how long ago it was stored, and fresh whether that is still within
+// its time to live. Reading works without a connection, so an entry that
+// is no longer fresh is what there is to show when Notion cannot be
+// reached.
+func (c *PageCache) Load(ctx context.Context, key string, out any) (age time.Duration, fresh bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, fmt.Errorf("context error: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cachePath := makeCachePath(c.cacheDir, key)
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		c.stats.MissCount++
+		return 0, false, fmt.Errorf("read cache entry %s: %w", key, err)
+	}
+	var entry CacheEntry
+	if err := entry.Unmarshal(data); err != nil {
+		c.stats.MissCount++
+		return 0, false, fmt.Errorf("unmarshal cache entry %s: %w", key, err)
+	}
+	if err := json.Unmarshal(entry.Data, out); err != nil {
+		c.stats.MissCount++
+		return 0, false, fmt.Errorf("unmarshal cached data %s: %w", key, err)
+	}
+
+	c.stats.HitCount++
+	return time.Since(entry.Timestamp), !c.IsExpired(&entry), nil
+}
+
 // SetInput contains the parameters for caching data.
 type SetInput struct {
 	PageID string

@@ -13,7 +13,23 @@ const (
 	ModeBrowse  = "BROWSE"
 	ModeEdit    = "EDIT"
 	ModeCommand = "COMMAND"
+	// ModeOffline marks content shown from a saved copy
+	ModeOffline = "OFFLINE"
 )
+
+// HumanAge says roughly how long a duration is: "5 min", "3 h", "2 days".
+func HumanAge(age time.Duration) string {
+	switch {
+	case age < time.Minute:
+		return "moments"
+	case age < time.Hour:
+		return fmt.Sprintf("%d min", int(age.Minutes()))
+	case age < 48*time.Hour:
+		return fmt.Sprintf("%d h", int(age.Hours()))
+	default:
+		return fmt.Sprintf("%d days", int(age.Hours()/24))
+	}
+}
 
 // Sync status constants for the status bar display.
 const (
@@ -215,7 +231,7 @@ func (s *StatusBar) UpdateSyncError(isNetworkError bool) {
 // getModeColor returns the appropriate color for the current mode.
 func (s StatusBar) getModeColor() lipgloss.Color {
 	switch s.mode {
-	case ModeEdit:
+	case ModeEdit, ModeOffline:
 		return s.styles.ModeEditColor
 	case ModeCommand:
 		return s.styles.ModeCommandColor

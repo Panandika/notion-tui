@@ -86,6 +86,10 @@ func init() {
 	// Automatically bind environment variables with NOTION_TUI_ prefix
 	viper.SetEnvPrefix("NOTION_TUI")
 	viper.AutomaticEnv()
+	// Options without a flag must be named here, or their environment
+	// variable is not seen when the configuration is read as a whole.
+	_ = viper.BindEnv("cache_dir")
+	_ = viper.BindEnv("default_database")
 }
 
 // initConfig initializes configuration from files and environment.

@@ -76,8 +76,10 @@ debug: false
 #   - Faster page loading
 #   - Offline access to previously viewed pages
 #   - Reduced API calls (respects rate limits)
-# Set to empty string ("") to disable caching
-cache_dir: "~/.cache/notion-tui"
+# A leading ~ stands for your home directory.
+# Set to "off" to keep nothing on disk (no offline reading then).
+# Also: NOTION_TUI_CACHE_DIR
+# cache_dir: "~/.cache/notion-tui"
 
 # ============================================================================
 # EXAMPLES
