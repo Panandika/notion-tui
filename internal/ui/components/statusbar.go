@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Mode constants for the status bar display.
@@ -301,6 +302,13 @@ func (s StatusBar) formatSyncTime() string {
 	}
 }
 
+// helpTextCleaner turns line breaks and tabs into spaces.
+var helpTextCleaner = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
+
+// minHelpWidth is the narrowest help text worth showing when it has to be
+// cut short.
+const minHelpWidth = 8
+
 // View renders the status bar with left + gap + right layout.
 func (s StatusBar) View() string {
 	if s.width <= 0 {
@@ -329,26 +337,30 @@ func (s StatusBar) View() string {
 	leftContent := modeText + separator + s.styles.Container.Render(syncContent)
 
 	// Build right side: help text
-	rightContent := s.styles.HelpText.Render(s.helpText)
+	// One line whatever the text holds: an error message can carry line
+	// breaks, and a tab has no fixed width
+	helpText := helpTextCleaner.Replace(s.helpText)
+	rightContent := s.styles.HelpText.Render(helpText)
 
 	// Calculate widths (account for ANSI codes by using lipgloss.Width)
 	leftWidth := lipgloss.Width(leftContent)
 	rightWidth := lipgloss.Width(rightContent)
 	totalContentWidth := leftWidth + rightWidth
 
-	// Handle different width scenarios
+	// Too narrow for everything: the left side stays whole and the help
+	// text is cut short, so the first hints are still there to read
 	if s.width < totalContentWidth {
-		// Compact mode: truncate or simplify content
 		if s.width < leftWidth+3 {
-			// Very narrow: just show mode
-			return s.styles.Container.Width(s.width).Render(modeText)
+			// Very narrow: just the mode, cut short rather than wrapped
+			return s.styles.Container.Width(s.width).Render(ansi.Truncate(modeText, s.width, ""))
 		}
-		// Show left side only with padding
-		paddingNeeded := s.width - leftWidth
-		if paddingNeeded < 0 {
-			paddingNeeded = 0
+		room := s.width - leftWidth - s.styles.HelpText.GetHorizontalFrameSize()
+		if room < minHelpWidth {
+			// No room for a readable hint: left side only
+			return s.styles.Container.Render(leftContent + strings.Repeat(" ", s.width-leftWidth))
 		}
-		return s.styles.Container.Render(leftContent + strings.Repeat(" ", paddingNeeded))
+		rightContent = s.styles.HelpText.Render(ansi.Truncate(helpText, room, "…"))
+		totalContentWidth = leftWidth + lipgloss.Width(rightContent)
 	}
 
 	// Normal mode: left + gap + right

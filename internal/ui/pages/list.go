@@ -80,8 +80,9 @@ type pagesLoadedMsg struct {
 
 // rowCreatedMsg is the result of creating a new row.
 type rowCreatedMsg struct {
-	id  string
-	err error
+	databaseID string
+	id         string
+	err        error
 }
 
 // ListResultMsg marks the results of work a ListPage started. The root model
@@ -149,6 +150,8 @@ type ListPage struct {
 	prompting bool
 	creating  bool
 	notice    string // Result of the last action, shown in the status bar
+	createdID string // Row just created, looked for in each reload until a key is pressed
+	missing   string // The notice that says it is not listed, if that is on screen
 
 	// Filtering rows by a property value
 	filter        notion.RowFilter        // Applied by Notion to every load
@@ -278,6 +281,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			lp.loading = false
 			lp.loadingMore = false
+			lp.createdID = ""
 			lp.err = msg.err
 			lp.statusBar.SetSyncStatus(components.StatusError)
 			if lp.filterStage == filterOff {
@@ -319,6 +323,18 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.skipped > 0 {
 			lp.notice = fmt.Sprintf("%d rows of the view could not be read and are left out", msg.skipped)
+		}
+		if !msg.more && lp.createdID != "" {
+			// Worked out again on every reload: the one made on returning
+			// from the new row may list it where the first did not
+			if lp.missing != "" && lp.notice == lp.missing {
+				lp.notice = ""
+			}
+			lp.missing = ""
+			// Rows that could not be read may include the new one
+			if notice := lp.missingRowNotice(); notice != "" && msg.skipped == 0 {
+				lp.notice, lp.missing = notice, notice
+			}
 		}
 		lp.updateStatusBarFromSidebar()
 		return lp, nil
@@ -375,6 +391,9 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return lp, nil
 
 	case rowCreatedMsg:
+		if msg.databaseID != lp.databaseID {
+			return lp, nil // A row made in a database that was left since
+		}
 		lp.creating = false
 		if msg.err != nil {
 			lp.statusBar.SetSyncStatus(components.StatusError)
@@ -383,6 +402,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return lp, nil
 		}
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
+		lp.createdID = msg.id
 		created := PageCreatedMsg{ID: msg.id}
 		// Open the new row, and reload the list so it is there on return
 		return lp, tea.Batch(func() tea.Msg { return created }, lp.fetchPagesCmd())
@@ -399,6 +419,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		lp.notice = ""
+		lp.createdID, lp.missing = "", ""
 		switch msg.String() {
 		case "n":
 			return lp, lp.startNewRow()
@@ -575,6 +596,32 @@ func (lp *ListPage) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows, status)
 }
 
+// missingRowNotice says why a row that was just created is not in the list
+// as reloaded since: the view or filter leaves it out, or the
+// rows loaded so far do not reach it. It is empty when the row is
+// there, or when nothing was created.
+func (lp *ListPage) missingRowNotice() string {
+	if lp.createdID == "" || lp.offline {
+		return ""
+	}
+	want := rowKey(lp.createdID)
+	for index := range lp.pageList {
+		if rowKey(lp.pageList[index].ID) == want {
+			return ""
+		}
+	}
+	// Kept short: the hint to get out has to fit a narrow status bar
+	switch {
+	case lp.hasMore:
+		return lp.keys.Label("New row is not among the loaded rows | {row_more}: load more")
+	case lp.view.ID != "":
+		return lp.keys.Label("New row is not in this view | {row_clear_filter}: show all")
+	case lp.filter.Active():
+		return lp.keys.Label("New row does not match the filter | {row_clear_filter}: show all")
+	}
+	return ""
+}
+
 // startNewRow opens the title prompt for a new row.
 func (lp *ListPage) startNewRow() tea.Cmd {
 	if lp.loading || lp.creating {
@@ -619,15 +666,16 @@ func (lp *ListPage) updatePrompt(msg tea.KeyMsg) tea.Cmd {
 		lp.statusBar.SetHelpText("Creating row...")
 
 		client := lp.notionClient
-		parent := notion.PageParent{DatabaseID: lp.databaseID}
+		databaseID := lp.databaseID
+		parent := notion.PageParent{DatabaseID: databaseID}
 		// The first heading of the Markdown becomes the row's title
 		markdown := "# " + notion.EscapeMarkdown(title)
 		return func() tea.Msg {
 			created, err := client.CreatePageMarkdown(context.Background(), parent, markdown)
 			if err != nil {
-				return rowCreatedMsg{err: err}
+				return rowCreatedMsg{databaseID: databaseID, err: err}
 			}
-			return rowCreatedMsg{id: created.ID}
+			return rowCreatedMsg{databaseID: databaseID, id: created.ID}
 		}
 	}
 	var cmd tea.Cmd
@@ -747,7 +795,7 @@ func (lp *ListPage) updateFilterPicker(msg tea.KeyMsg) tea.Cmd {
 func (lp *ListPage) applyFilter(filter notion.RowFilter) tea.Cmd {
 	lp.filter = filter
 	lp.view = notion.View{} // A view and a filter of ours do not combine
-	// The heading says it too: the status bar drops its text when narrow
+	// The heading says it too: a narrow status bar cuts its text short
 	title := "Pages"
 	if filter.Active() {
 		title = "Pages where " + filter.Label

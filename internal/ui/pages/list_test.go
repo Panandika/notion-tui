@@ -1305,7 +1305,7 @@ func TestListPage_NewRow(t *testing.T) {
 		t.Parallel()
 		lp := loadedList(t, &MockNotionClient{}, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
 
-		_, cmd := lp.Update(rowCreatedMsg{err: errors.New("forbidden")})
+		_, cmd := lp.Update(rowCreatedMsg{databaseID: "db-1", err: errors.New("forbidden")})
 
 		assert.Nil(t, cmd)
 		assert.Contains(t, lp.statusBar.HelpText(), "forbidden")
@@ -1907,5 +1907,150 @@ func TestListPage_SavedView(t *testing.T) {
 		feed(lp, cmd) // The answer arrives after the user moved on
 
 		assert.False(t, lp.InMode(), "no picker opens on its own")
+	})
+}
+
+func TestListPage_NewRowMissingFromTheReload(t *testing.T) {
+	t.Parallel()
+
+	existing := Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()}
+	// reloadAfterCreate creates a row and answers the reload that follows.
+	reloadAfterCreate := func(lp *ListPage, loaded pagesLoadedMsg) {
+		lp.Update(rowCreatedMsg{databaseID: "db-1", id: "aaaa-bbbb"})
+		loaded.epoch = lp.epoch
+		lp.Update(loaded)
+	}
+
+	t.Run("a view that leaves the new row out says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
+		assert.Contains(t, lp.statusBar.HelpText(), "P: show all")
+	})
+
+	t.Run("a filter that leaves the new row out says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		properties := notion.FilterProperties(&notionapi.Database{Properties: notionapi.PropertyConfigs{
+			"Done": &notionapi.CheckboxPropertyConfig{Type: notionapi.PropertyConfigTypeCheckbox},
+		}})
+		require.NotEmpty(t, properties)
+		lp.filter = properties[0].Choices[0]
+		require.True(t, lp.filter.Active())
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row does not match the filter")
+	})
+
+	t.Run("a row beyond the loaded rows says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}, hasMore: true, nextCursor: "c"})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not among the loaded rows")
+	})
+
+	t.Run("nothing is said when the new row is listed", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		// Notion writes the same ID with or without dashes, in either case
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing, {ID: "AAAABBBB", Title: "New"}}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+		assert.Contains(t, lp.statusBar.HelpText(), "2 pages in the view Done")
+	})
+
+	t.Run("nothing is said without a view or filter", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("the reload on coming back takes the notice away once the row is listed", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+		require.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
+
+		// No key was pressed in the list meanwhile: the row was open
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view", "still missing, still said")
+
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing, {ID: "aaaabbbb", Title: "New"}}})
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+		assert.Contains(t, lp.statusBar.HelpText(), "2 pages in the view Done")
+	})
+
+	t.Run("rows that could not be read are what is said, not a missing row", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}, skipped: 1})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "could not be read")
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("a failed reload says nothing about the row", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{err: errors.New("boom")})
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("a row made in a database that was left is ignored", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		epoch := lp.epoch
+
+		_, cmd := lp.Update(rowCreatedMsg{databaseID: "db-other", id: "aaaa-bbbb"})
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, epoch, lp.epoch, "no reload")
+		assert.Empty(t, lp.createdID)
+	})
+
+	t.Run("a later reload does not repeat it", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+		require.Contains(t, lp.statusBar.HelpText(), "New row")
+
+		lp.Update(listKey('j')) // any key clears a notice
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("loading more rows does not use up the check", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		lp.Update(rowCreatedMsg{databaseID: "db-1", id: "aaaa-bbbb"})
+		epoch := lp.epoch
+
+		lp.Update(pagesLoadedMsg{epoch: epoch, more: true, pages: []Page{{ID: "r2", Title: "Late"}}})
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+
+		lp.Update(pagesLoadedMsg{epoch: epoch, pages: []Page{existing}})
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
 	})
 }
