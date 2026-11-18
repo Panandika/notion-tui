@@ -149,6 +149,7 @@ type ListPage struct {
 	prompting bool
 	creating  bool
 	notice    string // Result of the last action, shown in the status bar
+	createdID string // Row just created, looked for in the reload that follows
 
 	// Filtering rows by a property value
 	filter        notion.RowFilter        // Applied by Notion to every load
@@ -278,6 +279,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			lp.loading = false
 			lp.loadingMore = false
+			lp.createdID = ""
 			lp.err = msg.err
 			lp.statusBar.SetSyncStatus(components.StatusError)
 			if lp.filterStage == filterOff {
@@ -319,6 +321,12 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.skipped > 0 {
 			lp.notice = fmt.Sprintf("%d rows of the view could not be read and are left out", msg.skipped)
+		}
+		if !msg.more {
+			if notice := lp.missingRowNotice(); notice != "" {
+				lp.notice = notice
+			}
+			lp.createdID = ""
 		}
 		lp.updateStatusBarFromSidebar()
 		return lp, nil
@@ -383,6 +391,7 @@ func (lp *ListPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return lp, nil
 		}
 		lp.statusBar.SetSyncStatus(components.StatusSynced)
+		lp.createdID = msg.id
 		created := PageCreatedMsg{ID: msg.id}
 		// Open the new row, and reload the list so it is there on return
 		return lp, tea.Batch(func() tea.Msg { return created }, lp.fetchPagesCmd())
@@ -573,6 +582,32 @@ func (lp *ListPage) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, rows, promptLine, status)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows, status)
+}
+
+// missingRowNotice says why a row that was just created is not in the list
+// that was reloaded after it: the view or filter leaves it out, or the
+// rows loaded so far do not reach it. It is empty when the row is
+// there, or when nothing was created.
+func (lp *ListPage) missingRowNotice() string {
+	if lp.createdID == "" || lp.offline {
+		return ""
+	}
+	want := rowKey(lp.createdID)
+	for index := range lp.pageList {
+		if rowKey(lp.pageList[index].ID) == want {
+			return ""
+		}
+	}
+	// Kept short: the hint to get out has to fit a narrow status bar
+	switch {
+	case lp.hasMore:
+		return lp.keys.Label("New row is not among the loaded rows | {row_more}: load more")
+	case lp.view.ID != "":
+		return lp.keys.Label("New row is not in this view | {row_clear_filter}: show all")
+	case lp.filter.Active():
+		return lp.keys.Label("New row does not match the filter | {row_clear_filter}: show all")
+	}
+	return ""
 }
 
 // startNewRow opens the title prompt for a new row.

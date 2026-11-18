@@ -999,3 +999,59 @@ func TestConnectionStateTransitions(t *testing.T) {
 	assert.Equal(t, ConnectionStateConnected, sb.ConnectionState())
 	assert.Equal(t, StatusSynced, sb.SyncStatus())
 }
+
+func TestStatusBar_LongHelpTextIsCutShort(t *testing.T) {
+	t.Parallel()
+
+	const help = "7 pages | enter: open | n: new | s: sort (title) | /: filter | p: by property | v: views | r: refresh"
+
+	t.Run("the first hints stay when the text does not fit", func(t *testing.T) {
+		t.Parallel()
+		sb := NewStatusBar()
+		sb.SetHelpText(help)
+		sb.SetWidth(80)
+
+		view := sb.View()
+		assert.Contains(t, view, ModeBrowse)
+		assert.Contains(t, view, "7 pages | enter: open")
+		assert.Contains(t, view, "…")
+		assert.NotContains(t, view, "r: refresh")
+		assert.Equal(t, 80, lipgloss.Width(view))
+		assert.Equal(t, 1, lipgloss.Height(view))
+	})
+
+	t.Run("the whole text shows when it fits", func(t *testing.T) {
+		t.Parallel()
+		sb := NewStatusBar()
+		sb.SetHelpText(help)
+		sb.SetWidth(160)
+
+		view := sb.View()
+		assert.Contains(t, view, "r: refresh")
+		assert.NotContains(t, view, "…")
+		assert.Equal(t, 160, lipgloss.Width(view))
+	})
+
+	t.Run("every width gives one line of that width", func(t *testing.T) {
+		t.Parallel()
+		for width := 1; width <= 140; width++ {
+			sb := NewStatusBar()
+			sb.SetHelpText(help)
+			sb.SetWidth(width)
+			view := sb.View()
+			assert.Equal(t, 1, lipgloss.Height(view), "width %d", width)
+			assert.Equal(t, width, lipgloss.Width(view), "width %d", width)
+		}
+	})
+
+	t.Run("no room for a readable hint leaves the left side only", func(t *testing.T) {
+		t.Parallel()
+		sb := NewStatusBar()
+		sb.SetHelpText(help)
+		sb.SetWidth(28)
+
+		view := sb.View()
+		assert.Contains(t, view, ModeBrowse)
+		assert.NotContains(t, view, "…")
+	})
+}

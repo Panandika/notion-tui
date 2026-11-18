@@ -1909,3 +1909,98 @@ func TestListPage_SavedView(t *testing.T) {
 		assert.False(t, lp.InMode(), "no picker opens on its own")
 	})
 }
+
+func TestListPage_NewRowMissingFromTheReload(t *testing.T) {
+	t.Parallel()
+
+	existing := Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()}
+	// reloadAfterCreate creates a row and answers the reload that follows.
+	reloadAfterCreate := func(lp *ListPage, loaded pagesLoadedMsg) {
+		lp.Update(rowCreatedMsg{id: "aaaa-bbbb"})
+		loaded.epoch = lp.epoch
+		lp.Update(loaded)
+	}
+
+	t.Run("a view that leaves the new row out says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
+		assert.Contains(t, lp.statusBar.HelpText(), "P: show all")
+	})
+
+	t.Run("a filter that leaves the new row out says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		properties := notion.FilterProperties(&notionapi.Database{Properties: notionapi.PropertyConfigs{
+			"Done": &notionapi.CheckboxPropertyConfig{Type: notionapi.PropertyConfigTypeCheckbox},
+		}})
+		require.NotEmpty(t, properties)
+		lp.filter = properties[0].Choices[0]
+		require.True(t, lp.filter.Active())
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row does not match the filter")
+	})
+
+	t.Run("a row beyond the loaded rows says so", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}, hasMore: true, nextCursor: "c"})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not among the loaded rows")
+	})
+
+	t.Run("nothing is said when the new row is listed", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		// Notion writes the same ID with or without dashes, in either case
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing, {ID: "AAAABBBB", Title: "New"}}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+		assert.Contains(t, lp.statusBar.HelpText(), "2 pages in the view Done")
+	})
+
+	t.Run("nothing is said without a view or filter", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("a later reload does not repeat it", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+		require.Contains(t, lp.statusBar.HelpText(), "New row")
+
+		lp.Update(listKey('j')) // any key clears a notice
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("loading more rows does not use up the check", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		lp.Update(rowCreatedMsg{id: "aaaa-bbbb"})
+		epoch := lp.epoch
+
+		lp.Update(pagesLoadedMsg{epoch: epoch, more: true, pages: []Page{{ID: "r2", Title: "Late"}}})
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+
+		lp.Update(pagesLoadedMsg{epoch: epoch, pages: []Page{existing}})
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
+	})
+}
