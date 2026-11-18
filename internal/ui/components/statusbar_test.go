@@ -1044,6 +1044,18 @@ func TestStatusBar_LongHelpTextIsCutShort(t *testing.T) {
 		}
 	})
 
+	t.Run("line breaks and tabs in the text do not break the line", func(t *testing.T) {
+		t.Parallel()
+		for width := 1; width <= 140; width++ {
+			sb := NewStatusBar()
+			sb.SetHelpText("Error: fetch pages: bad\r\nsecond line\tof a long answer from the server, which goes on\nand on")
+			sb.SetWidth(width)
+			view := sb.View()
+			assert.Equal(t, 1, lipgloss.Height(view), "width %d", width)
+			assert.Equal(t, width, lipgloss.Width(view), "width %d", width)
+		}
+	})
+
 	t.Run("no room for a readable hint leaves the left side only", func(t *testing.T) {
 		t.Parallel()
 		sb := NewStatusBar()

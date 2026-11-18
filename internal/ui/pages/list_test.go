@@ -1305,7 +1305,7 @@ func TestListPage_NewRow(t *testing.T) {
 		t.Parallel()
 		lp := loadedList(t, &MockNotionClient{}, Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()})
 
-		_, cmd := lp.Update(rowCreatedMsg{err: errors.New("forbidden")})
+		_, cmd := lp.Update(rowCreatedMsg{databaseID: "db-1", err: errors.New("forbidden")})
 
 		assert.Nil(t, cmd)
 		assert.Contains(t, lp.statusBar.HelpText(), "forbidden")
@@ -1916,7 +1916,7 @@ func TestListPage_NewRowMissingFromTheReload(t *testing.T) {
 	existing := Page{ID: "r1", Title: "Existing", UpdatedAt: time.Now()}
 	// reloadAfterCreate creates a row and answers the reload that follows.
 	reloadAfterCreate := func(lp *ListPage, loaded pagesLoadedMsg) {
-		lp.Update(rowCreatedMsg{id: "aaaa-bbbb"})
+		lp.Update(rowCreatedMsg{databaseID: "db-1", id: "aaaa-bbbb"})
 		loaded.epoch = lp.epoch
 		lp.Update(loaded)
 	}
@@ -1977,6 +1977,56 @@ func TestListPage_NewRowMissingFromTheReload(t *testing.T) {
 		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
 	})
 
+	t.Run("the reload on coming back takes the notice away once the row is listed", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}})
+		require.Contains(t, lp.statusBar.HelpText(), "New row is not in this view")
+
+		// No key was pressed in the list meanwhile: the row was open
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+		assert.Contains(t, lp.statusBar.HelpText(), "New row is not in this view", "still missing, still said")
+
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing, {ID: "aaaabbbb", Title: "New"}}})
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+		assert.Contains(t, lp.statusBar.HelpText(), "2 pages in the view Done")
+	})
+
+	t.Run("rows that could not be read are what is said, not a missing row", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{pages: []Page{existing}, skipped: 1})
+
+		assert.Contains(t, lp.statusBar.HelpText(), "could not be read")
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("a failed reload says nothing about the row", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		lp.view = notion.View{ID: "v1", Name: "Done"}
+
+		reloadAfterCreate(lp, pagesLoadedMsg{err: errors.New("boom")})
+		lp.Update(pagesLoadedMsg{epoch: lp.epoch, pages: []Page{existing}})
+
+		assert.NotContains(t, lp.statusBar.HelpText(), "New row")
+	})
+
+	t.Run("a row made in a database that was left is ignored", func(t *testing.T) {
+		t.Parallel()
+		lp := loadedList(t, &MockNotionClient{}, existing)
+		epoch := lp.epoch
+
+		_, cmd := lp.Update(rowCreatedMsg{databaseID: "db-other", id: "aaaa-bbbb"})
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, epoch, lp.epoch, "no reload")
+		assert.Empty(t, lp.createdID)
+	})
+
 	t.Run("a later reload does not repeat it", func(t *testing.T) {
 		t.Parallel()
 		lp := loadedList(t, &MockNotionClient{}, existing)
@@ -1994,7 +2044,7 @@ func TestListPage_NewRowMissingFromTheReload(t *testing.T) {
 		t.Parallel()
 		lp := loadedList(t, &MockNotionClient{}, existing)
 		lp.view = notion.View{ID: "v1", Name: "Done"}
-		lp.Update(rowCreatedMsg{id: "aaaa-bbbb"})
+		lp.Update(rowCreatedMsg{databaseID: "db-1", id: "aaaa-bbbb"})
 		epoch := lp.epoch
 
 		lp.Update(pagesLoadedMsg{epoch: epoch, more: true, pages: []Page{{ID: "r2", Title: "Late"}}})

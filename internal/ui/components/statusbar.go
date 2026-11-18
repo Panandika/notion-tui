@@ -302,6 +302,9 @@ func (s StatusBar) formatSyncTime() string {
 	}
 }
 
+// helpTextCleaner turns line breaks and tabs into spaces.
+var helpTextCleaner = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
+
 // minHelpWidth is the narrowest help text worth showing when it has to be
 // cut short.
 const minHelpWidth = 8
@@ -334,7 +337,10 @@ func (s StatusBar) View() string {
 	leftContent := modeText + separator + s.styles.Container.Render(syncContent)
 
 	// Build right side: help text
-	rightContent := s.styles.HelpText.Render(s.helpText)
+	// One line whatever the text holds: an error message can carry line
+	// breaks, and a tab has no fixed width
+	helpText := helpTextCleaner.Replace(s.helpText)
+	rightContent := s.styles.HelpText.Render(helpText)
 
 	// Calculate widths (account for ANSI codes by using lipgloss.Width)
 	leftWidth := lipgloss.Width(leftContent)
@@ -353,7 +359,7 @@ func (s StatusBar) View() string {
 			// No room for a readable hint: left side only
 			return s.styles.Container.Render(leftContent + strings.Repeat(" ", s.width-leftWidth))
 		}
-		rightContent = s.styles.HelpText.Render(ansi.Truncate(s.helpText, room, "…"))
+		rightContent = s.styles.HelpText.Render(ansi.Truncate(helpText, room, "…"))
 		totalContentWidth = leftWidth + lipgloss.Width(rightContent)
 	}
 
